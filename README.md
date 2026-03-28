@@ -3,10 +3,12 @@ Doom_CooldownPulse now works with the Midnight expansion. Thanks to Discoteq for
 Original addon: https://www.curseforge.com/wow/addons/doomcooldownpulse
 
 **What does it do?**
+
 Ever wanted to know when a certain ability will come off cooldown, but you're too caught up in a fight to notice? Doom_CooldownPulse is designed to fix that problem! It flashes the icon of the ability in the middle of your screen whenever it becomes usable again.
 
-**Great! Now.. how do I set it up?
-**Doom_CooldownPulse requires no initial setup; just install and you're good to go! However, the options frame (which is accessable by typing "/dcp") allows very easy customization. You can change all of the following:
+**Great! Now.. how do I set it up?**
+
+Doom_CooldownPulse requires no initial setup; just install and you're good to go! However, the options frame (which is accessable by typing "/dcp") allows very easy customization. You can change all of the following:
 
 Icon size
 Icon position (press the unlock button)
