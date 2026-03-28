@@ -1,7 +1,5 @@
 Curseforge: https://www.curseforge.com/wow/addons/doom-cooldownpulse-midnight
 
-Outdated original addon: https://www.curseforge.com/wow/addons/doomcooldownpulse
-
 Doom_CooldownPulse now works with the Midnight expansion. Thanks to Discoteq for maintaining the addon in the past. I’ve been using it for a long time, but support ended with the release of Midnight, so I updated the core code myself to adapt it to the Midnight API changes. It's same addon no new features.
 
 **What does it do?**
