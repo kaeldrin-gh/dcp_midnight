@@ -460,10 +460,16 @@ local function QueueWatchedItem(itemID, inventorySlot, forceRefresh)
     end
 
     local itemKey = GetItemTrackingKey(itemID)
+    
+    -- PRESERVATION FIX: Remember the existing ready time if we are forcing a refresh
+    local existingReadyAt = nil
+    if itemCooldowns[itemKey] then
+        existingReadyAt = itemCooldowns[itemKey].readyAt
+    elseif itemWatching[itemKey] then
+        existingReadyAt = itemWatching[itemKey][6]
+    end
 
     -- Do not override an already tracked cooldown unless explicitly requested.
-    -- This prevents shared-trinket helper watches from replacing a trinket's
-    -- real longer cooldown entry with a fresh 20s shared lockout snapshot.
     if (not forceRefresh) and (itemWatching[itemKey] ~= nil or itemCooldowns[itemKey] ~= nil) then
         return
     end
@@ -476,7 +482,8 @@ local function QueueWatchedItem(itemID, inventorySlot, forceRefresh)
         texture = C_Item.GetItemIconByID(itemID)
     end
 
-    itemWatching[itemKey] = {GetTime(), "item", texture, inventorySlot, itemID, nil}
+    -- Pass the preserved existingReadyAt to prevent downgrading a 40s CD to a 20s shared CD
+    itemWatching[itemKey] = {GetTime(), "item", texture, inventorySlot, itemID, existingReadyAt}
 end
 
 local function WatchItemAndSharedTrinket(itemID, knownSlot)
@@ -854,6 +861,44 @@ DCP:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 --      The 2nd arg is castGUID (not lineID) in Midnight; name doesn't matter.
 function DCP:UNIT_SPELLCAST_SUCCEEDED(unit, castGUID, spellID)
     if ((unit == "player" or unit == "pet") and spellID) then
+        
+        -- TRINKET SPELL FILTER: Ignore spells cast by trinkets to prevent false 20s flashes
+        local isTrinketSpell = false
+        local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+        local spellName = info and info.name
+        local spellTexture = info and info.iconID
+
+        if spellName or spellTexture then
+            for slot = 13, 14 do
+                local itemID = GetInventoryItemID("player", slot)
+                if itemID then
+                    local itemSpellName
+                    if GetItemSpell then
+                        itemSpellName = GetItemSpell(itemID)
+                    elseif C_Item and C_Item.GetItemSpell then
+                        itemSpellName = C_Item.GetItemSpell(itemID)
+                    end
+
+                    local itemTexture = GetInventoryItemTexture("player", slot)
+                    if not itemTexture and C_Item and C_Item.GetItemIconByID then
+                        itemTexture = C_Item.GetItemIconByID(itemID)
+                    end
+
+                    -- If the casted spell shares a name or an icon with the trinket, ignore it.
+                    if (itemSpellName and spellName and itemSpellName == spellName) or
+                       (itemTexture and spellTexture and itemTexture == spellTexture) then
+                        isTrinketSpell = true
+                        break
+                    end
+                end
+            end
+        end
+
+        if isTrinketSpell then
+            return
+        end
+        -- END TRINKET SPELL FILTER
+
         local isPet = (unit == "pet")
         local spellKey = GetSpellTrackingKey(spellID)
         -- Store spell in watching; v[4] = isPet flag so the pet overlay is applied.
