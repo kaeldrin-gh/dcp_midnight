@@ -1,0 +1,9 @@
+## Interface: 120001
+## Title: Doom_CooldownPulse_Midnight
+## Notes: Flash an ability's icon in the middle of the screen when it comes off cooldown.
+## Author: Kaeldrin[EU]
+## SavedVariables: DCP_Saved
+## SavedVariablesPerCharacter: DCP_SavedPerCharacter
+## IconTexture: 4630441
+
+Doom_CooldownPulse_Midnight.lua
