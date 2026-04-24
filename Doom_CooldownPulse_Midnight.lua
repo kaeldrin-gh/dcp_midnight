@@ -520,7 +520,7 @@ OnUpdate = function(_,update)
             if (GetTime() >= v[1] + 0.5) then
                 local watchedID = id
                 local watchedEntry = v
-                local getCooldownDetails = memoize(function()
+                local getCooldownDetails = function()
                     if not (C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellCooldown) then
                         return {}
                     end
@@ -544,7 +544,7 @@ OnUpdate = function(_,update)
                         spellID = watchedEntry[3],
                         isPet = watchedEntry[4]
                     }
-                end)
+                end
 
                 local cooldown = getCooldownDetails()
                 local ignoredByName = (ignoredSpells[cooldown.name] ~= nil)
@@ -848,7 +848,8 @@ DCP:RegisterEvent("ADDON_LOADED")
 function DCP:SPELL_UPDATE_COOLDOWN()
     for _,entry in pairs(spellCooldowns) do
         local getCooldownDetails = entry.getCooldownDetails or entry
-        if getCooldownDetails and getCooldownDetails.resetCache then
+        -- Add a type check so Lua doesn't crash trying to index a raw function
+        if type(getCooldownDetails) == "table" and getCooldownDetails.resetCache then
             getCooldownDetails.resetCache()
         end
     end
