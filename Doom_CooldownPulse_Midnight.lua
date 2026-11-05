@@ -5,6 +5,8 @@ local unpack = unpack or table.unpack
 local OnUpdate
 local MINIMUM_FLASH_COOLDOWN = 2.0
 local IsEquippedTrinketReady
+local showPetCooldowns
+local runtimer = 0
 
 local defaultSettings = {
     fadeInTime = 0.3,
@@ -22,7 +24,8 @@ local defaultSettings = {
 
 local defaultSettingsPerCharacter = {
     ignoredSpells = "",
-    invertIgnored = false
+    invertIgnored = false,
+    showPetCooldowns = true
 }
 
 local DCP = CreateFrame("frame")
@@ -96,6 +99,31 @@ local function RefreshLocals()
     showSpellName = DCP_Saved.showSpellName
     invertIgnored = DCP_SavedPerCharacter.invertIgnored
     remainingCooldownWhenNotified = DCP_Saved.remainingCooldownWhenNotified
+    showPetCooldowns = DCP_SavedPerCharacter.showPetCooldowns
+
+    if not showPetCooldowns then
+        -- Apply immediately, including casts already tracked and pulses queued
+        -- before the checkbox was changed. Keep player/item work in place.
+        for id, watch in pairs(spellWatching) do
+            if watch[4] then spellWatching[id] = nil end
+        end
+        for id, entry in pairs(spellCooldowns) do
+            if entry.watch and entry.watch[4] then spellCooldowns[id] = nil end
+        end
+        local removedCurrent = animating[1] and animating[1][2]
+        for i = #animating, 1, -1 do
+            if animating[i][2] then tremove(animating, i) end
+        end
+        if removedCurrent then
+            runtimer = 0
+            if not DCP:IsMouseEnabled() then
+                DCP.TextFrame:SetText(nil)
+                DCPT:SetTexture(nil)
+                DCPT:SetVertexColor(1,1,1)
+                DCP:SetAlpha(0)
+            end
+        end
+    end
 
     ignoredSpells = { }
     for _,v in ipairs({strsplit(",",DCP_SavedPerCharacter.ignoredSpells)}) do
@@ -144,6 +172,7 @@ local function IsAnimatingCooldownByName(name)
 end
 
 local function QueueAnimation(texture, isPet, name)
+    if isPet and not showPetCooldowns then return end
     if texture and not IsAnimatingCooldownByName(name) then
         tinsert(animating, {texture, isPet, name})
     end
@@ -153,99 +182,23 @@ local function QueueAnimation(texture, isPet, name)
     end
 end
 
-local secretCooldownBucket = CreateFrame("Frame", nil, UIParent)
-secretCooldownBucket:SetSize(1, 1)
-secretCooldownBucket:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", -10000, -10000)
-secretCooldownBucket:Show()
-
-local secretCooldownFrames = {}
-
-local function StartSecretCooldownTracker(id, cooldownType, cooldown, startedAt)
-    if not cooldown or not cooldown.texture then
-        return false
-    end
-
-    if cooldown.rawStart == nil or cooldown.rawDuration == nil then
-        return false
-    end
-
-    local key = tostring(cooldownType) .. ":" .. tostring(id)
-    local frame = secretCooldownFrames[key]
-    if not frame then
-        frame = CreateFrame("Cooldown", nil, secretCooldownBucket, "CooldownFrameTemplate")
-        frame:SetAllPoints(secretCooldownBucket)
-        frame:SetDrawSwipe(false)
-        frame:SetDrawEdge(false)
-        frame:SetDrawBling(false)
-        frame:SetHideCountdownNumbers(true)
-        frame.noCooldownCount = true
-        frame:SetScript("OnCooldownDone", function(self)
-            local elapsedSinceTrigger = nil
-            if self._startedAt then
-                elapsedSinceTrigger = GetTime() - self._startedAt
-            end
-
-            -- Preserve original behavior: ignore very short cooldowns.
-            if (elapsedSinceTrigger == nil or elapsedSinceTrigger > MINIMUM_FLASH_COOLDOWN) then
-                local trinketSlot = self._trinketSlot
-                local shouldFlash = true
-                if (trinketSlot == 13 or trinketSlot == 14) then
-                    shouldFlash = IsEquippedTrinketReady and IsEquippedTrinketReady(self._itemID, trinketSlot)
-                end
-
-                if shouldFlash then
-                    QueueAnimation(self._texture, self._isPet, self._name)
-                elseif (self._itemID and trinketSlot) then
-                    -- Re-check a bit later if the secret cooldown completed but the
-                    -- trinket is still not truly ready (shared-lockout edge cases).
-                    itemWatching[self._watchKey] = {GetTime(), "item", self._texture, trinketSlot, self._itemID}
-                end
-            end
-        end)
-        secretCooldownFrames[key] = frame
-    end
-
-    frame._name = cooldown.name
-    frame._texture = cooldown.texture
-    frame._isPet = cooldown.isPet
-    frame._startedAt = startedAt
-    frame._watchKey = id
-    frame._itemID = cooldown.itemID or id
-    frame._trinketSlot = cooldown.trinketSlot
-
-    local configured = false
-
-    -- Midnight security update: secret cooldown values must be configured via
-    -- duration objects, not SetCooldown(start, duration).
-    if frame.SetCooldownFromDurationObject and cooldown.durationObject then
-        configured = pcall(function()
-            frame:SetCooldownFromDurationObject(cooldown.durationObject)
-        end)
-    end
-
-    -- Fallback for non-secret numeric cooldowns (older behavior).
-    if not configured and cooldown.rawStart ~= nil and cooldown.rawDuration ~= nil then
-        configured = pcall(function()
-            frame:SetCooldown(cooldown.rawStart, cooldown.rawDuration)
-        end)
-    end
-
-    return configured
+local function IsSecretValue(value)
+    return issecretvalue and issecretvalue(value) or false
 end
 
 local function SafeNumber(value)
-    if value == nil then
+    -- Check secrecy before comparisons or arithmetic. pcall does not turn a
+    -- secret into a readable number, and even a nil comparison can fail.
+    if IsSecretValue(value) or type(value) ~= "number" then
         return nil
     end
+    return value
+end
 
-    local ok, num = pcall(function()
-        return value + 0
-    end)
-
-    if ok and type(num) == "number" then
-        return num
+local function SafeBoolean(value)
+    if not IsSecretValue(value) and type(value) == "boolean" then
+        return value
     end
-
     return nil
 end
 
@@ -253,36 +206,29 @@ local function NormalizeCooldown(rawStartOrTable, rawDuration, rawEnabled, defau
     local start, duration, enabled
     local rawStart, rawDurationValue
     local isActive
-    local durationObject
 
-    if type(rawStartOrTable) == "table" then
-        rawStart = rawStartOrTable.startTime or rawStartOrTable.start or rawStartOrTable[1]
-        rawDurationValue = rawStartOrTable.duration or rawStartOrTable[2]
-        isActive = rawStartOrTable.isActive
-
-        -- Try to preserve any duration object returned by the API for secure
-        -- cooldown frame setup in Midnight.
-        if type(rawDurationValue) == "table" then
-            durationObject = rawDurationValue
-        else
-            durationObject = rawStartOrTable.durationObject or rawStartOrTable.cooldownDuration
-        end
+    if not IsSecretValue(rawStartOrTable) and type(rawStartOrTable) == "table" then
+        rawStart = rawStartOrTable.startTime
+        rawDurationValue = rawStartOrTable.duration
+        isActive = SafeBoolean(rawStartOrTable.isActive)
 
         start = SafeNumber(rawStart)
         duration = SafeNumber(rawDurationValue)
-        -- IMPORTANT: Do NOT read/test `isEnabled` here in Midnight.
-        -- It can be a protected "secret boolean" and throws when used in boolean ops.
-        enabled = defaultEnabled
+        -- Blizzard documents these flags as NeverSecret on current Retail.
+        enabled = SafeBoolean(rawStartOrTable.isEnabled)
+        if enabled == nil then
+            enabled = defaultEnabled
+        end
     else
         rawStart = rawStartOrTable
         rawDurationValue = rawDuration
         start = SafeNumber(rawStart)
         duration = SafeNumber(rawDurationValue)
-        if rawEnabled == nil then
+        if IsSecretValue(rawEnabled) or rawEnabled == nil then
             enabled = defaultEnabled
-        elseif rawEnabled == 0 then
+        elseif rawEnabled == 0 or rawEnabled == false then
             enabled = false
-        elseif rawEnabled == 1 then
+        elseif rawEnabled == 1 or rawEnabled == true then
             enabled = true
         else
             -- Avoid boolean-testing unknown values; fall back to default.
@@ -290,15 +236,9 @@ local function NormalizeCooldown(rawStartOrTable, rawDuration, rawEnabled, defau
         end
     end
 
-    local isSecret = false
-    if rawStart ~= nil and start == nil then
-        isSecret = true
-    end
-    if rawDurationValue ~= nil and duration == nil then
-        isSecret = true
-    end
+    local isSecret = IsSecretValue(rawStart) or IsSecretValue(rawDurationValue)
 
-    return start, duration, enabled, rawStart, rawDurationValue, isSecret, isActive, durationObject
+    return start, duration, enabled, rawStart, rawDurationValue, isSecret, isActive
 end
 
 local function GetCooldownRemaining(start, duration)
@@ -322,7 +262,7 @@ local function GetCooldownReadyAt(start, duration)
 end
 
 local function BuildCooldownData(rawStartOrTable, rawDuration)
-    local start, duration, enabled, normalizedRawStart, normalizedRawDuration, isSecret, isActive, durationObject = NormalizeCooldown(rawStartOrTable, rawDuration, nil, true)
+    local start, duration, enabled, normalizedRawStart, normalizedRawDuration, isSecret, isActive = NormalizeCooldown(rawStartOrTable, rawDuration, nil, true)
     return {
         start = start,
         duration = duration,
@@ -331,7 +271,6 @@ local function BuildCooldownData(rawStartOrTable, rawDuration)
         rawDuration = normalizedRawDuration,
         isSecret = isSecret,
         isActive = isActive,
-        durationObject = durationObject,
         remaining = GetCooldownRemaining(start, duration),
         readyAt = GetCooldownReadyAt(start, duration)
     }
@@ -512,7 +451,6 @@ end
 -- Cooldown / Animation --
 --------------------------
 local elapsed = 0
-local runtimer = 0
 OnUpdate = function(_,update)
     elapsed = elapsed + update
     if (elapsed > 0.05) then
@@ -529,7 +467,7 @@ OnUpdate = function(_,update)
                     end
                     local info = C_Spell.GetSpellInfo(watchedEntry[3])
                     local cooldown = C_Spell.GetSpellCooldown(watchedEntry[3])
-                    local start, duration, enabled, rawStart, rawDuration, isSecret, isActive, durationObject = NormalizeCooldown(cooldown, nil, nil, true)
+                    local start, duration, enabled, rawStart, rawDuration, isSecret, isActive = NormalizeCooldown(cooldown, nil, nil, true)
                     return {
                         name = info and info.name,
                         texture = info and info.iconID,
@@ -540,7 +478,9 @@ OnUpdate = function(_,update)
                         rawDuration = rawDuration,
                         isSecret = isSecret,
                         isActive = isActive,
-                        durationObject = durationObject,
+                        -- Only populated by SPELL_UPDATE_COOLDOWN, where the
+                        -- API documents isOnGCD as reliable.
+                        isOnGCD = watchedEntry.isOnGCD,
                         spellID = watchedEntry[3],
                         isPet = watchedEntry[4]
                     }
@@ -557,14 +497,14 @@ OnUpdate = function(_,update)
                     local hasLongNumericCooldown = (duration and duration > MINIMUM_FLASH_COOLDOWN)
                     local hasUnknownDurationActiveCooldown = (cooldown.isActive and duration == nil)
 
-                    if (cooldown.texture and (hasLongNumericCooldown or hasUnknownDurationActiveCooldown)) then
+                    if (cooldown.isOnGCD ~= true and cooldown.texture and (hasLongNumericCooldown or hasUnknownDurationActiveCooldown)) then
                         spellCooldowns[watchedID] = {
                             getCooldownDetails = getCooldownDetails,
                             wasActive = (cooldown.isActive == true),
-                            startedAt = watchedEntry[1]
+                            startedAt = watchedEntry[1],
+                            watch = watchedEntry,
+                            hasLongNumericCooldown = hasLongNumericCooldown
                         }
-                        spellWatching[watchedID] = nil
-                    elseif ((cooldown.isActive or cooldown.isSecret) and StartSecretCooldownTracker(watchedID, watchedEntry[2], cooldown, watchedEntry[1])) then
                         spellWatching[watchedID] = nil
                     end
 
@@ -623,7 +563,6 @@ OnUpdate = function(_,update)
                         rawDuration = cooldownData.rawDuration,
                         isSecret = cooldownData.isSecret,
                         isActive = cooldownData.isActive,
-                        durationObject = cooldownData.durationObject,
                         itemID = itemID,
                         trinketSlot = equippedTrinketSlot
                     }
@@ -654,8 +593,6 @@ OnUpdate = function(_,update)
                             readyAt = entryReadyAt
                         }
                         itemWatching[watchedID] = nil
-                    elseif ((cooldown.isActive or cooldown.isSecret) and StartSecretCooldownTracker(watchedID, watchedEntry[2], cooldown, watchedEntry[1])) then
-                        itemWatching[watchedID] = nil
                     else
                         itemWatching[watchedID] = nil
                     end
@@ -668,7 +605,15 @@ OnUpdate = function(_,update)
             local cooldown = getCooldownDetails()
             local start = SafeNumber(cooldown.start)
             local duration = SafeNumber(cooldown.duration)
-            if (start and duration) then
+            if cooldown.isOnGCD == true then
+                -- The spell's own cooldown has ended or reset; only the GCD
+                -- remains. Do not delay its pulse until that shared timer ends.
+                local elapsedSinceStart = GetTime() - entry.startedAt
+                if entry.hasLongNumericCooldown or elapsedSinceStart > MINIMUM_FLASH_COOLDOWN then
+                    QueueAnimation(cooldown.texture, cooldown.isPet, cooldown.name)
+                end
+                spellCooldowns[i] = nil
+            elseif (start and duration) then
                 local remaining = duration-(GetTime()-start)
                 if (remaining <= remainingCooldownWhenNotified) then
                     QueueAnimation(cooldown.texture, cooldown.isPet, cooldown.name)
@@ -846,7 +791,18 @@ end
 DCP:RegisterEvent("ADDON_LOADED")
 
 function DCP:SPELL_UPDATE_COOLDOWN()
+    -- isOnGCD is NeverSecret, but is only reliable while handling this event.
+    -- Save it on each cast's watch record rather than reading it in OnUpdate.
+    local function refreshGlobalCooldown(watch)
+        if not watch or not (C_Spell and C_Spell.GetSpellCooldown) then return end
+        local cooldown = C_Spell.GetSpellCooldown(watch[3])
+        watch.isOnGCD = cooldown and SafeBoolean(cooldown.isOnGCD)
+    end
+    for _, watch in pairs(spellWatching) do
+        refreshGlobalCooldown(watch)
+    end
     for _,entry in pairs(spellCooldowns) do
+        refreshGlobalCooldown(entry.watch)
         local getCooldownDetails = entry.getCooldownDetails or entry
         -- Add a type check so Lua doesn't crash trying to index a raw function
         if type(getCooldownDetails) == "table" and getCooldownDetails.resetCache then
@@ -861,6 +817,11 @@ DCP:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 --      Also handles pet spells here directly (removing need for COMBAT_LOG).
 --      The 2nd arg is castGUID (not lineID) in Midnight; name doesn't matter.
 function DCP:UNIT_SPELLCAST_SUCCEEDED(unit, castGUID, spellID)
+    -- Never use a secret event value as a table key or spell identifier.
+    if IsSecretValue(unit) or IsSecretValue(spellID) then
+        return
+    end
+    if unit == "pet" and not showPetCooldowns then return end
     if ((unit == "player" or unit == "pet") and spellID) then
         
         -- TRINKET SPELL FILTER: Ignore spells cast by trinkets to prevent false 20s flashes
@@ -943,7 +904,9 @@ end
 DCP:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 
 hooksecurefunc("UseAction", function(slot)
+    if IsSecretValue(slot) then return end
     local actionType, itemID = GetActionInfo(slot)
+    if IsSecretValue(actionType) or IsSecretValue(itemID) then return end
     if (actionType == "item" and itemID) then
         -- Midnight-safe: track by itemID/slot and include paired trinket lockout.
         WatchItemAndSharedTrinket(itemID)
@@ -1029,6 +992,8 @@ function DCP:CreateOptionsFrame()
             DCP_OptionsFrameIgnoreTypeButtonWhitelist:SetChecked(false)
             DCP_OptionsFrameIgnoreTypeButtonBlacklist:SetChecked(true)
             DCP_OptionsFrameIgnoreBox:SetText("")
+            DCP_OptionsFramePetPulsesCheckButton:SetChecked(DCP_SavedPerCharacter.showPetCooldowns)
+            RefreshLocals()
             DCP:ClearAllPoints()
             DCP:SetPoint("CENTER",UIParent,"BOTTOMLEFT",DCP_Saved.x,DCP_Saved.y)
             end },
@@ -1042,7 +1007,7 @@ function DCP:CreateOptionsFrame()
       insets={left=11, right=12, top=12, bottom=11}
     })
     optionsframe:SetWidth(230)
-    optionsframe:SetHeight(610)
+    optionsframe:SetHeight(645)
     optionsframe:SetPoint("CENTER",UIParent)
     optionsframe:EnableMouse(true)
     optionsframe:SetMovable(true)
@@ -1092,8 +1057,19 @@ function DCP:CreateOptionsFrame()
         end)
     end
 
+    local petpulsecbt = CreateFrame("CheckButton", "DCP_OptionsFramePetPulsesCheckButton", optionsframe, "UICheckButtonTemplate")
+    petpulsecbt:SetPoint("TOPLEFT", "DCP_OptionsFrameSlider"..#sliders, "BOTTOMLEFT", -20, -14)
+    petpulsecbt:SetChecked(DCP_SavedPerCharacter.showPetCooldowns)
+    petpulsecbt:SetScript("OnClick", function(self)
+        DCP_SavedPerCharacter.showPetCooldowns = self:GetChecked() == true
+        RefreshLocals()
+    end)
+    local petpulsetext = optionsframe:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+    petpulsetext:SetPoint("LEFT", petpulsecbt, "RIGHT", 0, 0)
+    petpulsetext:SetText("Show pet cooldown pulses")
+
     local pettext = optionsframe:CreateFontString(nil,"ARTWORK","GameFontNormalSmall")
-    pettext:SetPoint("TOPLEFT","DCP_OptionsFrameSlider"..#sliders,"BOTTOMLEFT",-15,-30)
+    pettext:SetPoint("TOPLEFT", petpulsecbt, "BOTTOMLEFT", 5, -6)
     pettext:SetText("Pet color overlay:")
 
     local petcolorselect = CreateFrame('Button',"DCP_OptionsFramePetColorBox",optionsframe)
@@ -1120,7 +1096,7 @@ function DCP:CreateOptionsFrame()
     local petcolorselectbg = petcolorselect:CreateTexture(nil, 'BACKGROUND')
     petcolorselectbg:SetWidth(17)
     petcolorselectbg:SetHeight(17)
-    petcolorselectbg:SetTexture(1,1,1)
+    petcolorselectbg:SetColorTexture(1,1,1)
     petcolorselectbg:SetPoint('CENTER')
 
     local spellnametext = optionsframe:CreateFontString(nil,"ARTWORK","GameFontNormalSmall")

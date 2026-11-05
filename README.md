@@ -10,6 +10,8 @@ Ever wanted to know when a certain ability will come off cooldown, but you're to
 
 Doom_CooldownPulse requires no initial setup; just install and you're good to go! However, the options frame (which is accessable by typing "/dcp") allows very easy customization. You can change all of the following:
 
+To hide pet ability flashes, open `/dcp` and uncheck **Show pet cooldown pulses**. This preference is saved per character, takes effect immediately, and leaves player ability and item pulses enabled. Pet pulses are enabled by default.
+
 Icon size
 Icon position (press the unlock button)
 Fade in time
