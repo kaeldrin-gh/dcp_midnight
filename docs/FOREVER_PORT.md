@@ -15,6 +15,10 @@ Checked November 5, 2026. Target: **1.60.1 / interface 16001**. The launch UI-so
 
 Other fixes: initialize only on this addon's own `ADDON_LOADED`, and expire short cooldown watch entries after three seconds so they cannot poll forever. Existing saved-variable identifiers and customization controls remain.
 
+## Version 1.0.3: Options footer spacing
+
+The owner's in-game screenshot showed the filter edit box overlapping the upper button row after the pet checkbox was added. Increase the options panel height from 610 to 660 UI units, keeping the button rows anchored to the bottom, and give the edit box an eight-unit gap below the filter radio controls. This reserves space between the filter field and the Defaults/Unlock buttons. Cooldown behavior and saved settings are unchanged. The existing options-creation and behavior checks pass; final appearance needs checking in the client.
+
 ## Version 1.0.2: Retail improvements carried to Forever
 
 - Added the per-character **Show pet cooldown pulses** checkbox from the Retail update. Defaults to enabled, preserves an existing saved `false`, removes pending/tracked pet cooldowns and queued/active pet animations immediately when disabled, and retains player/item work. Re-enabling tracks subsequent casts; Defaults restores enabled.
