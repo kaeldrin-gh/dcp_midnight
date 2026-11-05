@@ -6,6 +6,8 @@ local unpack = unpack or table.unpack
 local OnUpdate
 local MINIMUM_FLASH_COOLDOWN = 2.0
 local IsEquippedTrinketReady
+local showPetCooldowns
+local runtimer = 0
 
 local defaultSettings = {
     fadeInTime = 0.3,
@@ -23,7 +25,8 @@ local defaultSettings = {
 
 local defaultSettingsPerCharacter = {
     ignoredSpells = "",
-    invertIgnored = false
+    invertIgnored = false,
+    showPetCooldowns = true
 }
 
 local DCP = CreateFrame("frame")
@@ -97,6 +100,32 @@ local function RefreshLocals()
     showSpellName = DCP_Saved.showSpellName
     invertIgnored = DCP_SavedPerCharacter.invertIgnored
     remainingCooldownWhenNotified = DCP_Saved.remainingCooldownWhenNotified
+    showPetCooldowns = DCP_SavedPerCharacter.showPetCooldowns
+
+    if not showPetCooldowns then
+        -- Apply immediately, including casts already tracked and pulses queued
+        -- before the checkbox was changed. Keep player/item work in place.
+        for id, watch in pairs(spellWatching) do
+            if watch[4] then spellWatching[id] = nil end
+        end
+        for id, entry in pairs(spellCooldowns) do
+            if entry.watch and entry.watch[4] then spellCooldowns[id] = nil end
+        end
+        local removedCurrent = animating[1] and animating[1][2]
+        for i = #animating, 1, -1 do
+            if animating[i][2] then tremove(animating, i) end
+        end
+        if removedCurrent then
+            runtimer = 0
+            if not DCP:IsMouseEnabled() then
+                DCP.TextFrame:SetText(nil)
+                DCPT:SetTexture(nil)
+                DCPT:SetVertexColor(1,1,1)
+                DCP:SetAlpha(0)
+            end
+        end
+    end
+
 
     ignoredSpells = { }
     for _,v in ipairs({strsplit(",",DCP_SavedPerCharacter.ignoredSpells)}) do
@@ -145,6 +174,7 @@ local function IsAnimatingCooldownByName(name)
 end
 
 local function QueueAnimation(texture, isPet, name)
+    if isPet and not showPetCooldowns then return end
     if texture and not IsAnimatingCooldownByName(name) then
         tinsert(animating, {texture, isPet, name})
     end
@@ -433,7 +463,6 @@ end
 -- Cooldown / Animation --
 --------------------------
 local elapsed = 0
-local runtimer = 0
 OnUpdate = function(_,update)
     elapsed = elapsed + update
     if (elapsed > 0.05) then
@@ -461,6 +490,8 @@ OnUpdate = function(_,update)
                         rawDuration = rawDuration,
                         isSecret = isSecret,
                         isActive = isActive,
+                        -- Sampled only during SPELL_UPDATE_COOLDOWN.
+                        isOnGCD = watchedEntry.isOnGCD,
                         spellID = watchedEntry[3],
                         isPet = watchedEntry[4]
                     }
@@ -477,12 +508,14 @@ OnUpdate = function(_,update)
                     local hasLongNumericCooldown = (duration and duration > MINIMUM_FLASH_COOLDOWN)
                     local hasUnknownDurationActiveCooldown = (cooldown.isActive and duration == nil)
 
-                    if (cooldown.texture and (hasLongNumericCooldown or hasUnknownDurationActiveCooldown)) then
+                    if (cooldown.isOnGCD ~= true and cooldown.texture and (hasLongNumericCooldown or hasUnknownDurationActiveCooldown)) then
                         spellCooldowns[watchedID] = {
                             getCooldownDetails = getCooldownDetails,
                             wasActive = (cooldown.isActive == true),
                             startedAt = watchedEntry[1],
-                            restrictedTiming = (duration == nil)
+                            restrictedTiming = (duration == nil),
+                            watch = watchedEntry,
+                            hasLongNumericCooldown = hasLongNumericCooldown
                         }
                         spellWatching[watchedID] = nil
                     end
@@ -584,7 +617,15 @@ OnUpdate = function(_,update)
             local cooldown = getCooldownDetails()
             local start = SafeNumber(cooldown.start)
             local duration = SafeNumber(cooldown.duration)
-            if (cooldown.enabled and start and duration) then
+            if cooldown.enabled and cooldown.isOnGCD == true then
+                -- Only the GCD remains: the tracked ability has finished or reset.
+                -- A real cooldown should pulse without waiting for that GCD.
+                local elapsedSinceStart = GetTime() - entry.startedAt
+                if entry.hasLongNumericCooldown or elapsedSinceStart > MINIMUM_FLASH_COOLDOWN then
+                    QueueAnimation(cooldown.texture, cooldown.isPet, cooldown.name)
+                end
+                spellCooldowns[i] = nil
+            elseif (cooldown.enabled and start and duration) then
                 local remaining = duration-(GetTime()-start)
                 if (remaining <= remainingCooldownWhenNotified) then
                     if not entry.restrictedTiming or GetTime() - entry.startedAt > MINIMUM_FLASH_COOLDOWN then
@@ -765,7 +806,18 @@ end
 DCP:RegisterEvent("ADDON_LOADED")
 
 function DCP:SPELL_UPDATE_COOLDOWN()
+    -- SpellCooldownInfo.isOnGCD is NeverSecret, but only reliable in this event.
+    -- Query the Pet bank for pet watches, just as the Forever polling path does.
+    local function refreshGlobalCooldown(watch)
+        if not watch then return end
+        local cooldown = GetWatchedSpellCooldown(watch[3], watch[4])
+        watch.isOnGCD = cooldown and SafeBoolean(cooldown.isOnGCD, nil)
+    end
+    for _, watch in pairs(spellWatching) do
+        refreshGlobalCooldown(watch)
+    end
     for _,entry in pairs(spellCooldowns) do
+        refreshGlobalCooldown(entry.watch)
         local getCooldownDetails = entry.getCooldownDetails or entry
         -- Add a type check so Lua doesn't crash trying to index a raw function
         if type(getCooldownDetails) == "table" and getCooldownDetails.resetCache then
@@ -778,6 +830,7 @@ DCP:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 -- Listen only for the player and pet; Forever has no readable combat log.
 function DCP:UNIT_SPELLCAST_SUCCEEDED(unit, castGUID, spellID)
     if IsSecret(unit) or IsSecret(spellID) then return end
+    if unit == "pet" and not showPetCooldowns then return end
     if ((unit == "player" or unit == "pet") and spellID) then
         
         -- Item spell casts also arrive here. Route them through item tracking so
@@ -918,6 +971,8 @@ function DCP:CreateOptionsFrame()
             DCP_OptionsFrameIgnoreTypeButtonWhitelist:SetChecked(false)
             DCP_OptionsFrameIgnoreTypeButtonBlacklist:SetChecked(true)
             DCP_OptionsFrameIgnoreBox:SetText("")
+            DCP_OptionsFramePetPulsesCheckButton:SetChecked(DCP_SavedPerCharacter.showPetCooldowns)
+            RefreshLocals()
             DCP:ClearAllPoints()
             DCP:SetPoint("CENTER",UIParent,"BOTTOMLEFT",DCP_Saved.x,DCP_Saved.y)
             end },
@@ -981,8 +1036,19 @@ function DCP:CreateOptionsFrame()
         end)
     end
 
+    local petpulsecbt = CreateFrame("CheckButton", "DCP_OptionsFramePetPulsesCheckButton", optionsframe, "UICheckButtonTemplate")
+    petpulsecbt:SetPoint("TOPLEFT", "DCP_OptionsFrameSlider"..#sliders, "BOTTOMLEFT", -20, -14)
+    petpulsecbt:SetChecked(DCP_SavedPerCharacter.showPetCooldowns)
+    petpulsecbt:SetScript("OnClick", function(self)
+        DCP_SavedPerCharacter.showPetCooldowns = self:GetChecked() == true
+        RefreshLocals()
+    end)
+    local petpulsetext = optionsframe:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+    petpulsetext:SetPoint("LEFT", petpulsecbt, "RIGHT", 0, 0)
+    petpulsetext:SetText("Show pet cooldown pulses")
+
     local pettext = optionsframe:CreateFontString(nil,"ARTWORK","GameFontNormalSmall")
-    pettext:SetPoint("TOPLEFT","DCP_OptionsFrameSlider"..#sliders,"BOTTOMLEFT",-15,-30)
+    pettext:SetPoint("TOPLEFT", petpulsecbt, "BOTTOMLEFT", 5, -6)
     pettext:SetText("Pet color overlay:")
 
     local petcolorselect = CreateFrame('Button',"DCP_OptionsFramePetColorBox",optionsframe)
@@ -1009,7 +1075,7 @@ function DCP:CreateOptionsFrame()
     local petcolorselectbg = petcolorselect:CreateTexture(nil, 'BACKGROUND')
     petcolorselectbg:SetWidth(17)
     petcolorselectbg:SetHeight(17)
-    petcolorselectbg:SetTexture(1,1,1)
+    petcolorselectbg:SetColorTexture(1,1,1)
     petcolorselectbg:SetPoint('CENTER')
 
     local spellnametext = optionsframe:CreateFontString(nil,"ARTWORK","GameFontNormalSmall")

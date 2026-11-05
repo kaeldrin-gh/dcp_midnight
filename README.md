@@ -21,13 +21,15 @@ Disable other Doom CooldownPulse editions in this client: they share slash comma
 
 Open `/dcp`, `/cooldownpulse`, or `/doomcooldownpulse`. Customize icon size and position (**Unlock**), fade times, opacity, hold time, animation scaling, early notification, spell names, ignored spells, and the pet icon overlay. Ignore lists accept comma-separated names or IDs; whitelist mode shows only listed abilities. **Test** previews the animation; **Defaults** restores settings.
 
+**Show pet cooldown pulses** is enabled by default. Uncheck it in `/dcp` to hide pet abilities for this character. The change takes effect immediately, including queued and active pet flashes; player and item flashes continue. Checking it again tracks subsequent pet casts. **Defaults** restores it to enabled.
+
 `DCP_Saved` and `DCP_SavedPerCharacter` retain their names and structure. WoW stores them under the addon's folder name, so older settings are not automatically imported. To migrate manually, exit WoW, back up the old SavedVariables files, and copy their contents to the corresponding `Doom_CooldownPulse_Forever.lua` SavedVariables files in the Forever account and character folders. Do not edit the addon source file to transfer settings.
 
 ## Compatibility
 
 Forever uses modern namespaced APIs, including `C_Spell`, `C_Item`, `C_Container`, and `C_SpellBook`. This dedicated Forever package does not target Retail or Classic Era.
 
-Readable numeric cooldowns support **Show Before Available Time**. When timing values are restricted, the addon uses the documented readable `isActive` state and pulses after the cooldown becomes inactive. Early notification is unavailable for those cooldowns. Restricted cast identifiers are skipped safely. The addon does not access the combat log or attempt to reveal secret values.
+Readable numeric cooldowns support **Show Before Available Time**. When timing values are restricted, the addon uses the documented readable `isActive` state and pulses after the cooldown becomes inactive. Early notification is unavailable for those cooldowns. If only the global cooldown remains after an ability finishes or resets, the addon now pulses without waiting for that GCD to end; the GCD flag is sampled only during the documented cooldown update event. Restricted cast identifiers are skipped safely. The addon does not access the combat log or attempt to reveal secret values.
 
 This build passed mocked Lua 5.1 behavior tests. It still needs validation inside the live Forever client, especially pet autocasts, combat restrictions, and individual items. See [the port notes and in-game checklist](docs/FOREVER_PORT.md).
 

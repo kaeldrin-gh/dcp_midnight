@@ -27,18 +27,42 @@ local function setup(settings, characterSettings)
     function methods:IsMouseEnabled() return self.mouse end
     function methods:EnableMouse(value) self.mouse = value end
     function methods:CreateFontString() return frame() end
-    function methods:CreateTexture() return frame() end
+    function methods:CreateTexture()
+        local texture = frame()
+        if self == state.frames[1] then state.icon = texture end
+        return texture
+    end
+    function methods:SetChecked(value) self.checked = value end
+    function methods:GetChecked() return rawget(self, "checked") end
+    function methods:SetText(value) self.text = value end
+    function methods:GetText() return rawget(self, "text") end
+    function methods:SetValue(value)
+        self.value = value
+        if self.scripts.OnValueChanged then self.scripts.OnValueChanged(self, value) end
+    end
+    function methods:GetValue() return self.value end
+    function methods:SetNormalTexture(value)
+        self.normalTexture = frame()
+        self.normalTexture:SetTexture(value)
+    end
+    function methods:GetNormalTexture() return self.normalTexture end
     function methods:SetTexture(value)
         self.texture = value
-        if value then table.insert(state.pulses, value) end
+        if self == state.icon and value then table.insert(state.pulses, value) end
     end
     function methods:GetTexture() return rawget(self, "texture") end
     env.UIParent = frame()
-    env.CreateFrame = function(_, name)
+    env.CreateFrame = function(_, name, parent, template)
         local f = frame(name)
+        if name and template == "OptionsSliderTemplate" then
+            for _, suffix in ipairs({"Text", "Low", "High"}) do frame(name .. suffix) end
+        end
         table.insert(state.frames, f)
         return f
     end
+    env.getglobal = function(name) return env[name] end
+    env.ceil = math.ceil
+    env.PlaySound = function() end
     env.GetTime = function() return state.now end
     env.STANDARD_TEXT_FONT = "font"
     env.tinsert, env.tremove, env.format = table.insert, table.remove, string.format
@@ -54,6 +78,7 @@ local function setup(settings, characterSettings)
     env.Enum = {SpellBookSpellBank = {Player = 0, Pet = 1}}
     env.issecretvalue = function(value) return type(value) == "table" and rawget(value, "secret") == true end
     local function numericCooldown(data)
+        if data and (env.issecretvalue(data.startTime) or env.issecretvalue(data.duration)) then return data end
         if data and state.now < data.startTime + data.duration then return data end
         return {startTime = 0, duration = 0, isActive = false, isEnabled = true}
     end
@@ -74,6 +99,7 @@ local function setup(settings, characterSettings)
         GetSpellBookItemCooldown = function(slot, bank)
             assert(slot == 1 and bank == 1)
             state.petQueries = (state.petQueries or 0) + 1
+            if type(state.petCooldown) == "function" then return state.petCooldown() end
             return numericCooldown(state.petCooldown)
         end,
     }
@@ -112,6 +138,13 @@ local function setup(settings, characterSettings)
     state:event("ADDON_LOADED", "SomeOtherAddon")
     assert(env.DCP_Saved == settings, "initialized on a different addon's event")
     state:event("ADDON_LOADED", "Doom_CooldownPulse_Forever")
+    function state:options() env.SlashCmdList.DOOMCOOLDOWNPULSE() end
+    function state:setPetPulses(enabled)
+        if not env.DCP_OptionsFrame then self:options() end
+        local checkbox = env.DCP_OptionsFramePetPulsesCheckButton
+        checkbox:SetChecked(enabled)
+        checkbox.scripts.OnClick(checkbox)
+    end
     state.env = env
     return state
 end
@@ -259,5 +292,159 @@ test("talent change clears watched cooldowns", function()
     s:event("PLAYER_SPECIALIZATION_CHANGED", "player"); s:tick(6)
     assert(#s.pulses == 0)
 end)
+
+test("readable reset pulses while only the GCD remains", function()
+    local s = setup()
+    s.spells[40] = cooldown(30)
+    s.spells[40].isOnGCD = false
+    s:cast(40); s:event("SPELL_UPDATE_COOLDOWN"); s:tick(10)
+    s.spells[40] = {startTime = s.now, duration = 1.5, isActive = true, isEnabled = true, isOnGCD = true}
+    s:event("SPELL_UPDATE_COOLDOWN"); s:tick(0.15)
+    assert(#s.pulses == 1 and s.pulses[1] == 40, "waited for the GCD")
+    s:tick(3); assert(#s.pulses == 1, "duplicate completion pulse")
+end)
+
+test("restricted reset pulses while only the GCD remains", function()
+    local s = setup()
+    s.spells[41] = {startTime = secret, duration = secret, isActive = true, isEnabled = true, isOnGCD = false}
+    s:cast(41); s:event("SPELL_UPDATE_COOLDOWN"); s:tick(10)
+    s.spells[41].isOnGCD = true
+    s:event("SPELL_UPDATE_COOLDOWN"); s:tick(0.15)
+    assert(#s.pulses == 1 and s.pulses[1] == 41)
+end)
+
+test("a real cooldown still active during GCD does not pulse", function()
+    local s = setup()
+    s.spells[42] = {startTime = secret, duration = secret, isActive = true, isEnabled = true, isOnGCD = false}
+    s:cast(42); s:event("SPELL_UPDATE_COOLDOWN"); s:tick(10)
+    s:event("SPELL_UPDATE_COOLDOWN"); s:tick(0.2)
+    assert(#s.pulses == 0)
+end)
+
+test("GCD flags outside the update event are ignored", function()
+    local s = setup()
+    s.spells[43] = {startTime = secret, duration = secret, isActive = true, isEnabled = true, isOnGCD = false}
+    s:cast(43); s:event("SPELL_UPDATE_COOLDOWN"); s:tick(10)
+    s.spells[43].isOnGCD = true
+    s:tick(0.2)
+    assert(#s.pulses == 0)
+end)
+
+test("known restricted GCD-only casts never enter real cooldown tracking", function()
+    local s = setup()
+    s.spells[44] = {startTime = secret, duration = secret, isActive = true, isEnabled = true, isOnGCD = true}
+    s:cast(44); s:event("SPELL_UPDATE_COOLDOWN"); s:tick(0.7)
+    s.spells[44].isActive, s.spells[44].isOnGCD = false, nil
+    s:event("SPELL_UPDATE_COOLDOWN"); s:tick(3)
+    assert(#s.pulses == 0 and s.dcp.scripts.OnUpdate == nil)
+end)
+
+test("missing GCD flag retains restricted completion fallback", function()
+    local s = setup()
+    s.spells[45] = {startTime = secret, duration = secret, isActive = true, isEnabled = true, isOnGCD = false}
+    s:cast(45); s:event("SPELL_UPDATE_COOLDOWN"); s:tick(5)
+    s.spells[45].isActive, s.spells[45].isOnGCD = false, nil
+    s:event("SPELL_UPDATE_COOLDOWN"); s:tick(0.15)
+    assert(#s.pulses == 1)
+end)
+
+test("pet GCD events query the Forever Pet spell bank", function()
+    local s = setup()
+    s.petID, s.petCooldown = 46, cooldown(30)
+    s.petCooldown.isOnGCD = false
+    s.spells[46] = cooldown(90) -- Player API must not control this pet's state.
+    s:cast(46, "pet"); s:event("SPELL_UPDATE_COOLDOWN"); s:tick(5)
+    s.petCooldown = {startTime = s.now, duration = 1.5, isActive = true, isEnabled = true, isOnGCD = true}
+    s:event("SPELL_UPDATE_COOLDOWN"); s:tick(0.15)
+    assert(#s.pulses == 1 and s.pulses[1] == 46 and s.petQueries > 0)
+end)
+
+test("held cooldown cannot complete from a GCD flag", function()
+    local s = setup()
+    s.spells[47] = function() return {startTime = 100, duration = 30, isActive = false, isEnabled = false, isOnGCD = true} end
+    s:cast(47); s:tick(5) -- No reliable GCD event yet; tracks the held timer.
+    s:event("SPELL_UPDATE_COOLDOWN"); s:tick(0.15)
+    assert(#s.pulses == 0)
+end)
+
+test("pet preference migrates existing settings and retains a saved false", function()
+    local old = {ignoredSpells = "", invertIgnored = false}
+    local s = setup(nil, old)
+    assert(s.env.DCP_SavedPerCharacter.showPetCooldowns == true)
+    s:setPetPulses(false)
+    local reloaded = setup(s.env.DCP_Saved, old)
+    reloaded:options()
+    assert(old.showPetCooldowns == false)
+    assert(not reloaded.env.DCP_OptionsFramePetPulsesCheckButton:GetChecked())
+end)
+
+test("disabling pet pulses removes watches before enrollment", function()
+    local s = setup()
+    s.petID, s.petCooldown = 50, cooldown(10)
+    s:cast(50, "pet"); s:tick(0.2); s:setPetPulses(false); s:tick(12)
+    assert(not s.petQueries and #s.pulses == 0)
+end)
+
+test("disabling pet pulses removes tracked pet cooldowns immediately", function()
+    local s = setup()
+    s.petID, s.petCooldown = 51, cooldown(10)
+    s:cast(51, "pet"); s:tick(1)
+    local queries = s.petQueries
+    assert(queries > 0)
+    s:setPetPulses(false); s:tick(12)
+    assert(s.petQueries == queries and #s.pulses == 0)
+end)
+
+test("hiding an active pet pulse preserves player and item work", function()
+    local s = setup()
+    s.petID, s.petCooldown = 52, cooldown(3)
+    s.spells[53], s.items[54], s.actionItem = cooldown(3.5), cooldown(4), 54
+    s:cast(52, "pet"); s:cast(53); s.hooks.UseAction(1); s:tick(3.1)
+    assert(s.icon:GetTexture() == 52, "pet should be currently displayed")
+    s:setPetPulses(false)
+    assert(s.icon:GetTexture() == nil, "active pet pulse was not cleared")
+    s:tick(5)
+    assert(#s.pulses == 3 and s.pulses[2] == 53 and s.pulses[3] == 54)
+end)
+
+test("hiding pet pulses removes a pet queued behind a player", function()
+    local s = setup({holdTime = 2})
+    s.spells[55] = cooldown(3)
+    s.petID, s.petCooldown = 56, cooldown(3.2)
+    s:cast(55); s:cast(56, "pet"); s:tick(3.4)
+    assert(s.icon:GetTexture() == 55)
+    s:setPetPulses(false); s:tick(5)
+    assert(#s.pulses == 1 and s.pulses[1] == 55)
+end)
+
+test("disabled repeated pet casts do not crowd out player completion", function()
+    local s = setup(nil, {ignoredSpells = "", invertIgnored = false, showPetCooldowns = false})
+    s.petID, s.petCooldown, s.spells[58] = 57, cooldown(3), cooldown(5)
+    s:cast(58)
+    for _ = 1, 70 do s:cast(57, "pet"); s:tick(0.1) end
+    assert(not s.petQueries and #s.pulses == 1 and s.pulses[1] == 58)
+end)
+
+test("rechecking pet pulses enables subsequent casts", function()
+    local s = setup(nil, {ignoredSpells = "", invertIgnored = false, showPetCooldowns = false})
+    s.petID, s.petCooldown = 59, cooldown(5)
+    s:cast(59, "pet"); s:tick(1); s:setPetPulses(true)
+    s.petCooldown = {startTime = s.now, duration = 5, isEnabled = true, isActive = true}
+    s:cast(59, "pet"); s:tick(7)
+    assert(#s.pulses == 1 and s.pulses[1] == 59)
+end)
+
+test("Defaults restores checkbox and pet pulse behavior", function()
+    local s = setup(nil, {ignoredSpells = "", invertIgnored = false, showPetCooldowns = false})
+    s:options()
+    local button = s.env.DCP_OptionsFrameButton4
+    button.scripts.OnClick(button)
+    assert(s.env.DCP_SavedPerCharacter.showPetCooldowns == true)
+    assert(s.env.DCP_OptionsFramePetPulsesCheckButton:GetChecked())
+    s.petID, s.petCooldown = 60, cooldown(5)
+    s:cast(60, "pet"); s:tick(7)
+    assert(#s.pulses == 1 and s.pulses[1] == 60)
+end)
+
 
 print(string.format("%d cooldown tests passed", passed))

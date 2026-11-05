@@ -15,6 +15,15 @@ Checked November 5, 2026. Target: **1.60.1 / interface 16001**. The launch UI-so
 
 Other fixes: initialize only on this addon's own `ADDON_LOADED`, and expire short cooldown watch entries after three seconds so they cannot poll forever. Existing saved-variable identifiers and customization controls remain.
 
+## Version 1.0.2: Retail improvements carried to Forever
+
+- Added the per-character **Show pet cooldown pulses** checkbox from the Retail update. Defaults to enabled, preserves an existing saved `false`, removes pending/tracked pet cooldowns and queued/active pet animations immediately when disabled, and retains player/item work. Re-enabling tracks subsequent casts; Defaults restores enabled.
+- Carried over the GCD timing fix: sample the documented `NeverSecret` `isOnGCD` flag only inside `SPELL_UPDATE_COOLDOWN`, retain that event-sampled state on each watch, exclude known GCD-only casts from real cooldown tracking, and pulse a previously tracked real cooldown as soon as only the GCD remains. Missing flags retain the existing completion fallback. Held cooldowns remain guarded by `isEnabled`.
+- Adapted event queries to Forever's `GetWatchedSpellCooldown` helper so pet watches still use the **Pet spellbook bank**. The Retail file was used as a reference, not substituted for the Forever implementation. Interface 16001 and the Forever icon are retained.
+- Updated the pet color swatch background to `SetColorTexture`, matching the Retail options fix.
+
+All **31 mocked Lua 5.1 behavior checks** pass, including the original 15 checks and 16 GCD/pet-toggle regressions. These new features still need an in-game Forever check: finish or reset a long cooldown during another spell's GCD, confirm no GCD-only flashes, and toggle pet pulses during queued/active animations. Also verify the checkbox layout, `/reload` persistence, re-enabling, and Defaults. The owner previously reported that the original Forever port worked in game; that report does not validate this new version.
+
 ## Restrictions and validation
 
 The state-transition fallback cannot honor an early-notification offset or precisely measure a restricted cooldown's original duration. It suppresses completions observed within two seconds of the cast to avoid ordinary GCD pulses. A cast whose identifier is restricted is not added to the watch list. These limits need checking against the live client's restrictions and actual abilities.
