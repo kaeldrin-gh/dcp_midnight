@@ -1,23 +1,34 @@
-Curseforge: https://www.curseforge.com/wow/addons/doom-cooldownpulse-midnight
+# Doom CooldownPulse - Forever
 
-Doom_CooldownPulse now works with the Midnight expansion. Thanks to Discoteq for maintaining the addon in the past. I’ve been using it for a long time, but support ended with the release of Midnight, so I updated the core code myself to adapt it to the Midnight API changes. It's same addon no new features.
+Flashes an ability's icon when its cooldown finishes. This edition targets **World of Warcraft: Forever 1.60.1**, interface **16001**. The port was checked against Blizzard's launch UI/API source for build **70790** (November 4, 2026).
 
-**What does it do?**
+Thanks to Discoteq for maintaining Doom CooldownPulse in the past. Kaeldrin's Midnight adaptation is the basis of this Forever edition.
 
-Ever wanted to know when a certain ability will come off cooldown, but you're too caught up in a fight to notice? Doom_CooldownPulse is designed to fix that problem! It flashes the icon of the ability in the middle of your screen whenever it becomes usable again.
+## Install
 
-**Great! Now.. how do I set it up?**
+1. Extract the release ZIP into `World of Warcraft/_forever_/Interface/AddOns/`.
+2. Check that the resulting path is `Doom_CooldownPulse_Forever/Doom_CooldownPulse_Forever.toc`, without an extra nested directory.
+3. Enable **Doom CooldownPulse - Forever** in the AddOns menu and reload the UI.
+4. Type `/dcp` and press **Test** to check the animation.
 
-Doom_CooldownPulse requires no initial setup; just install and you're good to go! However, the options frame (which is accessable by typing "/dcp") allows very easy customization. You can change all of the following:
+Disable other Doom CooldownPulse editions in this client: they share slash commands, frame names, and saved-variable identifiers.
 
-Icon size
-Icon position (press the unlock button)
-Fade in time
-Fade out time
-Max opacity (transparency)
-Max opacity hold time
-Animation scaling (how big/small it gets when it flashes)
-Animation start time before cooldown reset
-Cooldowns to ignore
-Overlay color for pet cooldown pulses
-It is intended to be very easy to customize, and your changes take effect immediately. You can see how your settings will look by pressing the "Test" button, or reset them to the default settings by pressing the "Defaults" button.
+## Options
+
+Open `/dcp`, `/cooldownpulse`, or `/doomcooldownpulse`. Customize icon size and position (**Unlock**), fade times, opacity, hold time, animation scaling, early notification, spell names, ignored spells, and the pet icon overlay. Ignore lists accept comma-separated names or IDs; whitelist mode shows only listed abilities. **Test** previews the animation; **Defaults** restores settings.
+
+`DCP_Saved` and `DCP_SavedPerCharacter` retain their names and structure. WoW stores them under the addon's folder name, so older settings are not automatically imported. To migrate manually, exit WoW, back up the old SavedVariables files, and copy their contents to the corresponding `Doom_CooldownPulse_Forever.lua` SavedVariables files in the Forever account and character folders. Do not edit the addon source file to transfer settings.
+
+## Compatibility
+
+Forever uses modern namespaced APIs, including `C_Spell`, `C_Item`, `C_Container`, and `C_SpellBook`. This dedicated Forever package does not target Retail or Classic Era.
+
+Readable numeric cooldowns support **Show Before Available Time**. When timing values are restricted, the addon uses the documented readable `isActive` state and pulses after the cooldown becomes inactive. Early notification is unavailable for those cooldowns. Restricted cast identifiers are skipped safely. The addon does not access the combat log or attempt to reveal secret values.
+
+This build passed mocked Lua 5.1 behavior tests. It still needs validation inside the live Forever client, especially pet autocasts, combat restrictions, and individual items. See [the port notes and in-game checklist](docs/FOREVER_PORT.md).
+
+## Development checks
+
+Run `lua tests/test_cooldowns.lua` from the repository root with Lua 5.1, or install `lupa` and run `python tests/run.py`. Tests cover spells, items, early notification, GCD filtering, ignore/whitelists, restricted values, pets, trinket macros, shared lockouts, held cooldowns, and talent changes.
+
+The previous Midnight edition's CurseForge page is [Doom CooldownPulse Midnight](https://www.curseforge.com/wow/addons/doom-cooldownpulse-midnight). This port has not been published there.
