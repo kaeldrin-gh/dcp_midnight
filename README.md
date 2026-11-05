@@ -1,5 +1,9 @@
 # Doom CooldownPulse - Forever
 
+![Doom CooldownPulse Forever icon](Media/Icon.png)
+
+This repository keeps the editions on separate branches: [`main`](https://github.com/kaeldrin-gh/dcp_midnight/tree/main) is **Retail/Midnight**; [`forever`](https://github.com/kaeldrin-gh/dcp_midnight/tree/forever) is **WoW Forever**. Download source archives from the branch for your client. The Forever branch is maintained independently and is not intended to merge into Retail.
+
 Flashes an ability's icon when its cooldown finishes. This edition targets **World of Warcraft: Forever 1.60.1**, interface **16001**. The port was checked against Blizzard's launch UI/API source for build **70790** (November 4, 2026).
 
 Thanks to Discoteq for maintaining Doom CooldownPulse in the past. Kaeldrin's Midnight adaptation is the basis of this Forever edition.
