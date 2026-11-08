@@ -1067,7 +1067,7 @@ function DCP:CreateOptionsFrame()
 
     local headertext = optionsframe:CreateFontString(nil,"ARTWORK","GameFontNormal")
     headertext:SetPoint("TOP",header,"TOP",0,-14)
-    headertext:SetText("Doom CooldownPulse - Forever")
+    headertext:SetText("Doom CooldownPulse")
 
     for i,v in pairs(sliders) do
         local slider = CreateFrame("slider", "DCP_OptionsFrameSlider"..i, optionsframe, "OptionsSliderTemplate")
@@ -1241,7 +1241,7 @@ function DCP:RegisterSettingsCategory()
     panel:Hide()
     local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
     title:SetPoint("TOP", panel, "TOP", 0, -28)
-    title:SetText("Doom CooldownPulse - Forever")
+    title:SetText("Doom CooldownPulse")
     local description = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     description:SetPoint("TOP", title, "BOTTOM", 0, -20)
     description:SetWidth(460)
@@ -1252,7 +1252,7 @@ function DCP:RegisterSettingsCategory()
     button:SetNormalFontObject("GameFontNormalLarge")
     button:SetText("Open /dcp options")
     button:SetScript("OnClick", function() DCP:OpenFloatingOptions() end)
-    settingsCategory = Settings.RegisterCanvasLayoutCategory(panel, "Doom CooldownPulse - Forever")
+    settingsCategory = Settings.RegisterCanvasLayoutCategory(panel, "Doom CooldownPulse")
     Settings.RegisterAddOnCategory(settingsCategory)
     return true
 end

@@ -1,4 +1,4 @@
-# Doom CooldownPulse - Forever
+# Doom CooldownPulse
 
 ![Doom CooldownPulse Forever icon](Media/Icon.png)
 
@@ -12,14 +12,14 @@ Thanks to Discoteq for maintaining Doom CooldownPulse in the past. Kaeldrin's Mi
 
 1. Extract the release ZIP into `World of Warcraft/_forever_/Interface/AddOns/`.
 2. Check that the resulting path is `Doom_CooldownPulse_Forever/Doom_CooldownPulse_Forever.toc`, without an extra nested directory.
-3. Enable **Doom CooldownPulse - Forever** in the AddOns menu and reload the UI.
+3. Enable **Doom CooldownPulse** in the AddOns menu and reload the UI.
 4. Type `/dcp` and press **Test** to check the animation.
 
 Disable other Doom CooldownPulse editions in this client: they share slash commands, frame names, and saved-variable identifiers.
 
 ## Options
 
-Use `/dcp`, `/cooldownpulse`, or `/doomcooldownpulse` for the floating options window. **Settings → AddOns → Doom CooldownPulse - Forever** contains one large **Open /dcp options** button that closes Settings and opens that same window. All controls stay in the floating window. Customize icon size and position (**Unlock**), fade times, opacity, hold time, animation scaling, early notification, spell names, ignored spells, and the pet icon overlay. Ignore lists accept comma-separated names or IDs; whitelist mode shows only listed abilities. **Test** previews the animation; **Defaults** restores settings.
+Use `/dcp`, `/cooldownpulse`, or `/doomcooldownpulse` for the floating options window. **Settings → AddOns → Doom CooldownPulse** contains one large **Open /dcp options** button that closes Settings and opens that same window. All controls stay in the floating window. Customize icon size and position (**Unlock**), fade times, opacity, hold time, animation scaling, early notification, spell names, ignored spells, and the pet icon overlay. Ignore lists accept comma-separated names or IDs; whitelist mode shows only listed abilities. **Test** previews the animation; **Defaults** restores settings.
 
 **Show pet cooldown pulses** is enabled by default. Uncheck it in `/dcp` to hide pet abilities for this character. The change takes effect immediately, including queued and active pet flashes; player and item flashes continue. Checking it again tracks subsequent pet casts. **Defaults** restores it to enabled.
 
