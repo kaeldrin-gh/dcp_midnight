@@ -51,6 +51,7 @@ local function setup(settings, characterSettings, nativeSettings)
     function methods:GetWidth() return 1920 end
     function methods:GetHeight() return 1080 end
     function methods:GetEffectiveScale() return 1 end
+    function methods:SetAlpha(value) self.alpha = value end
     function methods:IsMouseEnabled() return self.mouse end
     function methods:EnableMouse(value) self.mouse = value end
     function methods:CreateFontString()
@@ -628,141 +629,70 @@ test("restricted cast IDs are not converted into diagnostic text", function()
 end)
 
 
-test("Settings registration is lazy and idempotent", function()
+test("Settings launcher registers once without opening the floating window", function()
     local s = setup(nil, nil, true)
     assert(s.settingsRegistrations == 1 and s.settingsRegistered)
-    assert(s.env.DCP_OptionsFrame == nil and s.env.DCP_ForeverSettingsSlider1 == nil)
+    assert(s.env.DCP_OptionsFrame == nil and not s.settingsPanel:IsShown())
+    assert(s.env.DCP_ForeverSettingsOpenOptions:GetText() == "Open /dcp options")
     s.dcp:PLAYER_LOGIN()
     assert(s.settingsRegistrations == 1)
 end)
 
-test("dcp and both aliases retain the independent floating screen", function()
+test("dcp keeps its independent floating screen", function()
     local s = setup(nil, nil, true)
     s:options()
-    local frame = s.env.DCP_OptionsFrame
-    assert(frame:GetParent() == s.env.UIParent and frame:IsShown() and frame.movable)
-    assert(not s.settingsOpenedID and not s.settingsPanel:IsShown())
+    local options = s.env.DCP_OptionsFrame
+    assert(options:IsShown() and options:GetParent() == s.env.UIParent and options.movable)
+    assert(not s.settingsOpenedID)
     assert(s.env.SLASH_DOOMCOOLDOWNPULSE2 == "/cooldownpulse" and s.env.SLASH_DOOMCOOLDOWNPULSE3 == "/doomcooldownpulse")
 end)
 
-test("Settings page builds separate flat controls without a floating window", function()
+test("Settings contains only the launcher and does not create duplicate controls", function()
     local s = setup(nil, nil, true)
     s:settings()
     assert(s.settingsPanel:IsShown() and s.env.DCP_OptionsFrame == nil)
-    for _, suffix in ipairs({"Slider1", "Slider7", "SpellNames", "PetPulses", "PetColor", "Blacklist", "Whitelist", "IgnoreBox", "Action4"}) do
-        assert(s.env["DCP_ForeverSettings"..suffix], "missing native control " .. suffix)
-    end
-    local content = s.env.DCP_ForeverSettingsSlider1:GetParent()
-    assert(content:GetParent().kind == "ScrollFrame")
-    assert(content:GetParent().scrollChild == content)
-    local slider = s.env.DCP_ForeverSettingsSlider1
+    assert(s.env.DCP_ForeverSettingsSlider1 == nil and s.env.DCP_ForeverSettingsAction2 == nil)
+    local button = s.env.DCP_ForeverSettingsOpenOptions
+    assert(button:GetParent() == s.settingsCanvas)
     s.settingsPanel:Hide(); s:settings()
-    assert(s.env.DCP_ForeverSettingsSlider1 == slider, "duplicated Settings controls on reopen")
+    assert(s.env.DCP_ForeverSettingsOpenOptions == button)
 end)
 
-test("native values reach the floating controls when dcp opens", function()
+test("big Settings button closes Settings and opens the floating options", function()
     local s = setup(nil, nil, true)
     s:settings()
-    s.env.DCP_ForeverSettingsSlider1:SetValue(95)
-    local checkbox = s.env.DCP_ForeverSettingsPetPulses
-    checkbox:SetChecked(false); checkbox.scripts.OnClick(checkbox)
-    s:options()
-    assert(s.env.DCP_Saved.iconSize == 95 and s.env.DCP_OptionsFrameSlider1:GetValue() == 95)
-    assert(not s.env.DCP_OptionsFramePetPulsesCheckButton:GetChecked())
-    assert(not s.settingsPanel:IsShown() and s.env.DCP_OptionsFrame:IsShown())
-end)
-
-test("floating values update the independent native controls", function()
-    local s = setup(nil, nil, true)
-    s:settings(); s:options()
-    s.env.DCP_OptionsFrameSlider1:SetValue(105)
-    s:setPetPulses(false)
-    s:settings()
-    assert(s.env.DCP_ForeverSettingsSlider1:GetValue() == 105)
-    assert(not s.env.DCP_ForeverSettingsPetPulses:GetChecked())
-    assert(s.env.DCP_OptionsFrame:GetParent() == s.env.UIParent, "floating window was reparented")
-end)
-
-test("native filter mode, input, and spell-name checkbox apply", function()
-    local s = setup(nil, nil, true)
-    s:settings()
-    local input = s.env.DCP_ForeverSettingsIgnoreBox
-    input:SetText("99, Spell 100"); input.scripts.OnEnterPressed(input)
-    local mode = s.env.DCP_ForeverSettingsWhitelist
-    mode.scripts.OnClick(mode)
-    local names = s.env.DCP_ForeverSettingsSpellNames
-    names:SetChecked(true); names.scripts.OnClick(names)
-    assert(s.env.DCP_SavedPerCharacter.ignoredSpells == "99, Spell 100")
-    assert(s.env.DCP_SavedPerCharacter.invertIgnored and s.env.DCP_Saved.showSpellName)
-    assert(mode:GetChecked() and not s.env.DCP_ForeverSettingsBlacklist:GetChecked())
-    s:options()
-    assert(s.env.DCP_OptionsFrameIgnoreBox:GetText() == "99, Spell 100")
-    assert(s.env.DCP_OptionsFrameSpellNameCheckButton:GetChecked())
-end)
-
-test("native refresh preserves an unfinished filter edit", function()
-    local s = setup(nil, nil, true)
-    s:settings()
-    local input = s.env.DCP_ForeverSettingsIgnoreBox
-    input:SetFocus(); input:SetText("unfinished")
-    s.env.DCP_ForeverSettingsSlider1:SetValue(90)
-    assert(input:GetText() == "unfinished")
-    input:ClearFocus()
-    assert(s.env.DCP_SavedPerCharacter.ignoredSpells == "unfinished")
-end)
-
-test("native overlay color picker applies and cancels shared color", function()
-    local s = setup(nil, nil, true)
-    s:settings()
-    local button = s.env.DCP_ForeverSettingsPetColor
+    local button = s.env.DCP_ForeverSettingsOpenOptions
     button.scripts.OnClick(button)
-    s.pickerColor = {0.2, 0.4, 0.6}
-    s.pickerOptions.swatchFunc()
-    assert(s.env.DCP_Saved.petOverlay[2] == 0.4)
-    s.pickerOptions.cancelFunc()
-    assert(s.env.DCP_Saved.petOverlay[1] == 1 and s.env.DCP_Saved.petOverlay[2] == 1)
+    assert(not s.settingsPanel:IsShown())
+    assert(s.env.DCP_OptionsFrame:IsShown() and s.env.DCP_OptionsFrame:GetParent() == s.env.UIParent)
 end)
 
-test("native Test uses floating preview without recording a cooldown", function()
+test("launcher reuses the floating window and preserves preferences", function()
     local s = setup(nil, nil, true)
-    s:settings()
-    s.env.DCP_ForeverSettingsAction1.scripts.OnClick(); s:tick(0.2)
-    assert(not s.settingsPanel:IsShown() and s.env.DCP_OptionsFrame:IsShown())
-    assert(#s.pulses == 1)
-    s:command("last")
-    assert(#s.messages == 1 and s.messages[1]:find("No cooldown pulses", 1, true))
-end)
-
-test("native Move icon opens and unlocks the floating screen", function()
-    local s = setup(nil, nil, true)
-    s:settings()
-    s.env.DCP_ForeverSettingsAction2.scripts.OnClick()
-    assert(s.dcp:IsMouseEnabled() and s.env.DCP_OptionsFrameButton3:GetText() == "Lock")
-    assert(s.env.DCP_OptionsFrame:IsShown() and not s.settingsPanel:IsShown())
-    s:settings(); s.env.DCP_ForeverSettingsAction2.scripts.OnClick()
-    assert(s.dcp:IsMouseEnabled(), "Move icon should not relock an already unlocked icon")
-end)
-
-test("native Defaults resets shared values without opening floating options", function()
-    local s = setup({iconSize = 100}, {ignoredSpells = "99", invertIgnored = true, showPetCooldowns = false}, true)
-    s:settings()
-    s.env.DCP_ForeverSettingsAction4.scripts.OnClick()
-    assert(s.settingsPanel:IsShown() and not s.env.DCP_OptionsFrame:IsShown())
-    assert(s.env.DCP_Saved.iconSize == 75 and s.env.DCP_ForeverSettingsSlider1:GetValue() == 75)
-    assert(s.env.DCP_SavedPerCharacter.showPetCooldowns and s.env.DCP_ForeverSettingsPetPulses:GetChecked())
-    assert(s.env.DCP_ForeverSettingsIgnoreBox:GetText() == "")
-end)
-
-test("native Floating options action opens standalone controls", function()
-    local s = setup(nil, nil, true)
-    s:settings(); s.env.DCP_ForeverSettingsAction3.scripts.OnClick()
-    assert(s.env.DCP_OptionsFrame:GetParent() == s.env.UIParent and s.env.DCP_OptionsFrame:IsShown())
+    s:options()
+    local options = s.env.DCP_OptionsFrame
+    s:setPetPulses(false)
+    s:settings(); s.env.DCP_ForeverSettingsOpenOptions.scripts.OnClick()
+    assert(s.env.DCP_OptionsFrame == options and options:GetParent() == s.env.UIParent)
+    assert(not s.env.DCP_OptionsFramePetPulsesCheckButton:GetChecked())
     local close = s.env.DCP_OptionsFrameButton1
     close.scripts.OnClick(close)
-    assert(not s.env.DCP_OptionsFrame:IsShown())
+    assert(not options:IsShown())
 end)
 
-test("diagnostics and delayed Settings registration preserve standalone access", function()
+test("floating Unlock locks and hides the icon on its second click", function()
+    local s = setup(nil, nil, true)
+    s:options()
+    local button = s.env.DCP_OptionsFrameButton3
+    button.scripts.OnClick(button)
+    assert(s.dcp:IsMouseEnabled() and s.dcp.alpha == 1 and button:GetText() == "Lock")
+    button.scripts.OnClick(button)
+    assert(not s.dcp:IsMouseEnabled() and s.dcp.alpha == 0 and button:GetText() == "Unlock")
+    button.scripts.OnClick(button)
+    assert(s.dcp:IsMouseEnabled() and s.dcp.alpha == 1)
+end)
+
+test("history and delayed Settings registration leave dcp standalone", function()
     local s = setup()
     s:installSettings(); s:event("PLAYER_LOGIN")
     s:command("last"); s:command("last clear")
@@ -771,14 +701,13 @@ test("diagnostics and delayed Settings registration preserve standalone access",
     assert(s.env.DCP_OptionsFrame:IsShown() and not s.settingsOpenedID)
 end)
 
-
-test("reopened floating sliders refresh both position and displayed value", function()
+test("reopening floating options refreshes slider values and labels", function()
     local s = setup(nil, nil, true)
     s:options()
+    local options = s.env.DCP_OptionsFrame
     local slider = s.env.DCP_OptionsFrameSlider1
-    assert(slider.fontStrings[1]:GetText() == "75.0")
-    s.env.DCP_OptionsFrame:Hide()
-    s:settings(); s.env.DCP_ForeverSettingsSlider1:SetValue(95)
+    options:Hide()
+    s.env.DCP_Saved.iconSize = 95
     s:options()
     assert(slider:GetValue() == 95 and slider.fontStrings[1]:GetText() == "95.0")
 end)

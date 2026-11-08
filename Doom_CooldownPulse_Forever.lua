@@ -11,7 +11,6 @@ local runtimer = 0
 local recentPulses = {}
 local MAX_RECENT_PULSES = 10
 local settingsCategory
-local refreshSettingsPage
 
 local optionSliders = {
         { text = "Icon Size", value = "iconSize", min = 30, max = 125, step = 5 },
@@ -145,7 +144,6 @@ local function RefreshLocals()
     for _,v in ipairs({strsplit(",",DCP_SavedPerCharacter.ignoredSpells)}) do
         ignoredSpells[strtrim(v)] = true
     end
-    if refreshSettingsPage then refreshSettingsPage() end
 end
 
 local function MergeTable(destination, source)
@@ -1225,7 +1223,7 @@ function DCP:CreateOptionsFrame()
 end
 
 
--- Flat Settings canvas; the original /dcp window remains a separate frame.
+-- Settings provides a launcher; all controls remain in the /dcp window.
 function DCP:OpenFloatingOptions()
     if SettingsPanel and SettingsPanel:IsShown() then HideUIPanel(SettingsPanel) end
     if not DCP_OptionsFrame then self:CreateOptionsFrame() end
@@ -1236,180 +1234,24 @@ function DCP:CloseOptionsFrame()
     DCP_OptionsFrame:Hide()
 end
 
-function DCP:BuildSettingsPage(panel)
-    local scroll = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", 4, -4)
-    scroll:SetPoint("BOTTOMRIGHT", -28, 8)
-    local content = CreateFrame("Frame", nil, scroll)
-    content:SetSize(616, 610)
-    scroll:SetScrollChild(content)
-    local function fitContent(_, width)
-        if width > 0 then content:SetScale(math.min(1, width / 616)) end
-    end
-    scroll:SetScript("OnSizeChanged", fitContent)
-    fitContent(scroll, scroll:GetWidth())
-
-    local function label(text, font, x, y)
-        local region = content:CreateFontString(nil, "ARTWORK", font or "GameFontHighlight")
-        region:SetPoint("TOPLEFT", content, "TOPLEFT", x, y)
-        region:SetJustifyH("LEFT")
-        region:SetText(text)
-        return region
-    end
-    local icon = content:CreateTexture(nil, "ARTWORK")
-    icon:SetSize(48, 48)
-    icon:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -12)
-    icon:SetTexture("Interface\\AddOns\\Doom_CooldownPulse_Forever\\Media\\Icon.tga")
-    label("Doom CooldownPulse - Forever", "GameFontNormalLarge", 84, -16)
-    local subtitle = label("Customize your cooldown flashes. Use /dcp for the floating window.", "GameFontHighlightSmall", 84, -40)
-    subtitle:SetTextColor(0.7, 0.7, 0.7)
-    label("Appearance", "GameFontNormal", 20, -82)
-    label("Timing", "GameFontNormal", 332, -82)
-
-    local syncing = false
-    local sliderFrames = {}
-    local positions = {{20,-112}, {332,-112}, {332,-176}, {20,-176}, {332,-240}, {20,-240}, {332,-304}}
-    for i, definition in ipairs(optionSliders) do
-        local slider = CreateFrame("Slider", "DCP_ForeverSettingsSlider"..i, content, "OptionsSliderTemplate")
-        slider:SetPoint("TOPLEFT", content, "TOPLEFT", positions[i][1], positions[i][2])
-        slider:SetWidth(244)
-        slider:SetMinMaxValues(definition.min, definition.max)
-        slider:SetValueStep(definition.step)
-        slider:SetObeyStepOnDrag(true)
-        getglobal("DCP_ForeverSettingsSlider"..i.."Text"):SetText(definition.text)
-        getglobal("DCP_ForeverSettingsSlider"..i.."Low"):SetText(definition.min)
-        getglobal("DCP_ForeverSettingsSlider"..i.."High"):SetText(definition.max)
-        local valueText = slider:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-        valueText:SetPoint("TOP", slider, "BOTTOM", 0, -3)
-        slider:SetScript("OnValueChanged", function(self, value)
-            valueText:SetText(format("%.1f", value))
-            if syncing then return end
-            DCP_Saved[definition.value] = value
-            RefreshLocals()
-        end)
-        sliderFrames[i] = slider
-    end
-
-    local function checkbox(name, text, x, y, onClick)
-        local button = CreateFrame("CheckButton", name, content, "UICheckButtonTemplate")
-        button:SetPoint("TOPLEFT", content, "TOPLEFT", x-4, y)
-        local textRegion = content:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-        textRegion:SetPoint("LEFT", button, "RIGHT", 0, 0)
-        textRegion:SetText(text)
-        button:SetScript("OnClick", onClick)
-        return button
-    end
-    local showNames = checkbox("DCP_ForeverSettingsSpellNames", "Show spell names", 20, -298, function(self)
-        DCP_Saved.showSpellName = self:GetChecked() == true
-        RefreshLocals()
-    end)
-    label("Pets and spell filters", "GameFontNormal", 20, -364)
-    local showPets = checkbox("DCP_ForeverSettingsPetPulses", "Show pet cooldown pulses", 20, -384, function(self)
-        DCP_SavedPerCharacter.showPetCooldowns = self:GetChecked() == true
-        RefreshLocals()
-    end)
-    label("Pet overlay color", "GameFontHighlight", 332, -392)
-    local color = CreateFrame("Button", "DCP_ForeverSettingsPetColor", content)
-    color:SetSize(24, 24)
-    color:SetPoint("TOPLEFT", content, "TOPLEFT", 478, -384)
-    local swatch = color:CreateTexture(nil, "ARTWORK")
-    swatch:SetAllPoints(color)
-    color:SetScript("OnClick", function()
-        local r,g,b = unpack(DCP_Saved.petOverlay)
-        ColorPickerFrame:SetupColorPickerAndShow({
-            r=r, g=g, b=b, hasOpacity=false,
-            swatchFunc=function()
-                DCP_Saved.petOverlay = {ColorPickerFrame:GetColorRGB()}
-                RefreshLocals()
-            end,
-            cancelFunc=function()
-                DCP_Saved.petOverlay = {r,g,b}
-                RefreshLocals()
-            end,
-        })
-    end)
-
-    label("Spell filter", "GameFontHighlight", 20, -436)
-    local blacklist = CreateFrame("CheckButton", "DCP_ForeverSettingsBlacklist", content, "UIRadioButtonTemplate")
-    blacklist:SetPoint("TOPLEFT", content, "TOPLEFT", 174, -432)
-    label("Blacklist", "GameFontHighlightSmall", 198, -436)
-    local whitelist = CreateFrame("CheckButton", "DCP_ForeverSettingsWhitelist", content, "UIRadioButtonTemplate")
-    whitelist:SetPoint("TOPLEFT", content, "TOPLEFT", 304, -432)
-    label("Whitelist", "GameFontHighlightSmall", 328, -436)
-    blacklist:SetScript("OnClick", function()
-        DCP_SavedPerCharacter.invertIgnored = false
-        RefreshLocals()
-    end)
-    whitelist:SetScript("OnClick", function()
-        DCP_SavedPerCharacter.invertIgnored = true
-        RefreshLocals()
-    end)
-    local filter = CreateFrame("EditBox", "DCP_ForeverSettingsIgnoreBox", content, "InputBoxTemplate")
-    filter:SetAutoFocus(false)
-    filter:SetSize(560, 32)
-    filter:SetPoint("TOPLEFT", content, "TOPLEFT", 24, -462)
-    local function saveFilter(self)
-        if syncing then return end
-        DCP_SavedPerCharacter.ignoredSpells = self:GetText()
-        RefreshLocals()
-    end
-    filter:SetScript("OnEditFocusLost", saveFilter)
-    filter:SetScript("OnEnterPressed", function(self) saveFilter(self) self:ClearFocus() end)
-    local hint = label("Separate spell names or IDs with commas. Changes apply immediately.", "GameFontHighlightSmall", 20, -504)
-    hint:SetTextColor(0.7, 0.7, 0.7)
-
-    local function runFloatingButton(index)
-        DCP:OpenFloatingOptions()
-        local button = getglobal("DCP_OptionsFrameButton"..index)
-        button:GetScript("OnClick")(button)
-    end
-    local actions = {
-        {"Test", function() runFloatingButton(2) end},
-        {"Move icon", function()
-            DCP:OpenFloatingOptions()
-            local button = DCP_OptionsFrameButton3
-            if button:GetText() == "Unlock" then button:GetScript("OnClick")(button) end
-        end},
-        {"Floating options", function() DCP:OpenFloatingOptions() end},
-        {"Restore defaults", function()
-            if not DCP_OptionsFrame then DCP:CreateOptionsFrame() DCP_OptionsFrame:Hide() end
-            local button = DCP_OptionsFrameButton4
-            button:GetScript("OnClick")(button)
-        end},
-    }
-    for i, action in ipairs(actions) do
-        local button = CreateFrame("Button", "DCP_ForeverSettingsAction"..i, content, "UIPanelButtonTemplate")
-        button:SetSize(130, 26)
-        button:SetPoint("TOPLEFT", content, "TOPLEFT", 20+(i-1)*144, -548)
-        button:SetText(action[1])
-        button:SetScript("OnClick", action[2])
-    end
-
-    refreshSettingsPage = function()
-        syncing = true
-        for i, definition in ipairs(optionSliders) do sliderFrames[i]:SetValue(DCP_Saved[definition.value]) end
-        showNames:SetChecked(DCP_Saved.showSpellName == true)
-        showPets:SetChecked(DCP_SavedPerCharacter.showPetCooldowns)
-        blacklist:SetChecked(not DCP_SavedPerCharacter.invertIgnored)
-        whitelist:SetChecked(DCP_SavedPerCharacter.invertIgnored)
-        -- Preserve unfinished typing when a slider or checkbox is changed.
-        if not filter:HasFocus() then filter:SetText(DCP_SavedPerCharacter.ignoredSpells) end
-        swatch:SetColorTexture(unpack(DCP_Saved.petOverlay))
-        syncing = false
-    end
-    refreshSettingsPage()
-end
-
 function DCP:RegisterSettingsCategory()
     if settingsCategory then return true end
     if not (Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory) then return false end
     local panel = CreateFrame("Frame", "DCP_ForeverSettingsPanel", UIParent)
     panel:Hide()
-    local built = false
-    panel:SetScript("OnShow", function()
-        if not built then self:BuildSettingsPage(panel) built = true end
-        refreshSettingsPage()
-    end)
+    local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+    title:SetPoint("TOP", panel, "TOP", 0, -28)
+    title:SetText("Doom CooldownPulse - Forever")
+    local description = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    description:SetPoint("TOP", title, "BOTTOM", 0, -20)
+    description:SetWidth(460)
+    description:SetText("Use the floating options window to customize cooldown pulses.")
+    local button = CreateFrame("Button", "DCP_ForeverSettingsOpenOptions", panel, "UIPanelButtonTemplate")
+    button:SetSize(360, 56)
+    button:SetPoint("TOP", description, "BOTTOM", 0, -28)
+    button:SetNormalFontObject("GameFontNormalLarge")
+    button:SetText("Open /dcp options")
+    button:SetScript("OnClick", function() DCP:OpenFloatingOptions() end)
     settingsCategory = Settings.RegisterCanvasLayoutCategory(panel, "Doom CooldownPulse - Forever")
     Settings.RegisterAddOnCategory(settingsCategory)
     return true

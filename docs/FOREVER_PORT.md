@@ -15,6 +15,10 @@ Checked November 5, 2026. Target: **1.60.1 / interface 16001**. The launch UI-so
 
 Other fixes: initialize only on this addon's own `ADDON_LOADED`, and expire short cooldown watch entries after three seconds so they cannot poll forever. Existing saved-variable identifiers and customization controls remain.
 
+## Version 1.0.6: Settings launcher
+
+Replace the duplicate Settings form with one large **Open /dcp options** button. It closes Settings and opens the existing floating window. `/dcp` and its aliases remain standalone; all sliders, filters, pet controls, and the Unlock/Lock toggle live in that window. No embedded frame, duplicate move button, or duplicate settings state remains. The floating Unlock button shows/unlocks the icon on the first click and hides/locks it on the second. All 51 mocked Lua 5.1 checks pass, including repeated toggling and the launcher path.
+
 ## Version 1.0.5: Separate floating and Settings layouts
 
 Restore `/dcp` and both aliases to the independent floating window. Replace the embedded dialog in Settings → AddOns with a flat, two-column page: Appearance and Timing groups, pet visibility and color, blacklist/whitelist input, and a spaced action row. The native page has no dialog border or draggable header, scrolls vertically, and scales to fit narrower canvas widths. Both layouts use one shared slider definition list and the same saved variables. Opening either layout never reparents the other.
