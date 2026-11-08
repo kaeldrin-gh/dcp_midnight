@@ -15,6 +15,14 @@ Checked November 5, 2026. Target: **1.60.1 / interface 16001**. The launch UI-so
 
 Other fixes: initialize only on this addon's own `ADDON_LOADED`, and expire short cooldown watch entries after three seconds so they cannot poll forever. Existing saved-variable identifiers and customization controls remain.
 
+## Version 1.0.5: Separate floating and Settings layouts
+
+Restore `/dcp` and both aliases to the independent floating window. Replace the embedded dialog in Settings → AddOns with a flat, two-column page: Appearance and Timing groups, pet visibility and color, blacklist/whitelist input, and a spaced action row. The native page has no dialog border or draggable header, scrolls vertically, and scales to fit narrower canvas widths. Both layouts use one shared slider definition list and the same saved variables. Opening either layout never reparents the other.
+
+Native changes apply immediately. Reopening the floating window refreshes its slider positions and value labels, checkboxes, filter, and pet color. Native Test/Move actions open the floating window and close Settings; native Defaults uses the same reset handler without opening a floating dialog. Preserve unfinished filter typing while other native controls refresh.
+
+All **57 mocked Lua 5.1 checks** pass, covering both entry points, independent frames, shared values in both directions, color apply/cancel, filtering, defaults, preview/move actions, and reopening value labels. Final typography, spacing, scrolling and scaling still need an in-game visual check.
+
 ## Version 1.0.4: Internal casts, pulse identification, and Settings
 
 The owner reported a sporadic insignia-like flash whose name/ID is still unknown. The existing cast handler can enroll engine-generated player casts; this establishes a possible cause, not the identity of that particular flash. There is no automatic developer-test animation in the addon; its Test preview is triggered only by the options button.

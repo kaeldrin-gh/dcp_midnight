@@ -11,6 +11,17 @@ local runtimer = 0
 local recentPulses = {}
 local MAX_RECENT_PULSES = 10
 local settingsCategory
+local refreshSettingsPage
+
+local optionSliders = {
+        { text = "Icon Size", value = "iconSize", min = 30, max = 125, step = 5 },
+        { text = "Fade In Time", value = "fadeInTime", min = 0, max = 1.5, step = 0.1 },
+        { text = "Fade Out Time", value = "fadeOutTime", min = 0, max = 1.5, step = 0.1 },
+        { text = "Max Opacity", value = "maxAlpha", min = 0, max = 1, step = 0.1 },
+        { text = "Max Opacity Hold Time", value = "holdTime", min = 0, max = 1.5, step = 0.1 },
+        { text = "Animation Scaling", value = "animScale", min = 0, max = 2, step = 0.1 },
+        { text = "Show Before Available Time", value = "remainingCooldownWhenNotified", min = 0, max = 3, step = 0.1 },
+    }
 
 local defaultSettings = {
     fadeInTime = 0.3,
@@ -134,6 +145,7 @@ local function RefreshLocals()
     for _,v in ipairs({strsplit(",",DCP_SavedPerCharacter.ignoredSpells)}) do
         ignoredSpells[strtrim(v)] = true
     end
+    if refreshSettingsPage then refreshSettingsPage() end
 end
 
 local function MergeTable(destination, source)
@@ -975,31 +987,19 @@ SlashCmdList["DOOMCOOLDOWNPULSE"] = function(message)
         print("DCP: Recent pulse history cleared.")
         return
     end
-    if settingsCategory and Settings.OpenToCategory then
-        Settings.OpenToCategory(settingsCategory:GetID())
-    else
-        DCP:OpenFloatingOptions()
-    end
+    DCP:OpenFloatingOptions()
 end
 SLASH_DOOMCOOLDOWNPULSE1 = "/dcp"
 SLASH_DOOMCOOLDOWNPULSE2 = "/cooldownpulse"
 SLASH_DOOMCOOLDOWNPULSE3 = "/doomcooldownpulse"
 
 function DCP:CreateOptionsFrame()
-    local sliders = {
-        { text = "Icon Size", value = "iconSize", min = 30, max = 125, step = 5 },
-        { text = "Fade In Time", value = "fadeInTime", min = 0, max = 1.5, step = 0.1 },
-        { text = "Fade Out Time", value = "fadeOutTime", min = 0, max = 1.5, step = 0.1 },
-        { text = "Max Opacity", value = "maxAlpha", min = 0, max = 1, step = 0.1 },
-        { text = "Max Opacity Hold Time", value = "holdTime", min = 0, max = 1.5, step = 0.1 },
-        { text = "Animation Scaling", value = "animScale", min = 0, max = 2, step = 0.1 },
-        { text = "Show Before Available Time", value = "remainingCooldownWhenNotified", min = 0, max = 3, step = 0.1 },
-    }
+    local sliders = optionSliders
+    local syncingOptions = false
 
     local buttons = {
         { text = "Close", func = function() DCP:CloseOptionsFrame() end },
         { text = "Test", func = function(self)
-            if DCP_OptionsFrame.settingsEmbedded then DCP:OpenFloatingOptions() end
             DCP_OptionsFrameButton3:SetText("Unlock")
             DCP:EnableMouse(false)
             RefreshLocals()
@@ -1007,7 +1007,6 @@ function DCP:CreateOptionsFrame()
             DCP:SetScript("OnUpdate", OnUpdate)
             end },
         { text = "Unlock", func = function(self)
-            if DCP_OptionsFrame.settingsEmbedded then DCP:OpenFloatingOptions() end
             if (self:GetText() == "Unlock") then
                 RefreshLocals()
                 DCP:SetWidth(iconSize)
@@ -1050,14 +1049,13 @@ function DCP:CreateOptionsFrame()
       tile=1, tileSize=32, edgeSize=32,
       insets={left=11, right=12, top=12, bottom=11}
     })
-    optionsframe.settingsEmbedded = false
     optionsframe:SetWidth(230)
     optionsframe:SetHeight(660)
     optionsframe:SetPoint("CENTER",UIParent)
     optionsframe:EnableMouse(true)
     optionsframe:SetMovable(true)
     optionsframe:RegisterForDrag("LeftButton")
-    optionsframe:SetScript("OnDragStart", function(self) if not self.settingsEmbedded then self:StartMoving() end end)
+    optionsframe:SetScript("OnDragStart", function(self) self:StartMoving() end)
     optionsframe:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
     optionsframe:SetFrameStrata("FULLSCREEN_DIALOG")
     optionsframe:SetScript("OnHide", function() RefreshLocals() end)
@@ -1092,9 +1090,10 @@ function DCP:CreateOptionsFrame()
         slider:SetValue(DCP_Saved[v.value])
         slider:SetScript("OnValueChanged",function()
             local value = slider:GetValue()
+            valuetext:SetText(format("%.1f", value))
+            if syncingOptions then return end
             DCP_Saved[v.value] = value
             RefreshLocals()
-            valuetext:SetText(format("%.1f", value))
             if (DCP:IsMouseEnabled()) then
                 DCP:SetWidth(DCP_Saved.iconSize)
                 DCP:SetHeight(DCP_Saved.iconSize)
@@ -1210,68 +1209,206 @@ function DCP:CreateOptionsFrame()
         button:SetText(v.text)
         button:SetScript("OnClick", function(self) PlaySound(852) v.func(self) end)
     end
+    optionsframe:SetScript("OnShow", function()
+        syncingOptions = true
+        for i, definition in ipairs(sliders) do
+            getglobal("DCP_OptionsFrameSlider"..i):SetValue(DCP_Saved[definition.value])
+        end
+        DCP_OptionsFramePetPulsesCheckButton:SetChecked(DCP_SavedPerCharacter.showPetCooldowns)
+        DCP_OptionsFrameSpellNameCheckButton:SetChecked(DCP_Saved.showSpellName == true)
+        DCP_OptionsFrameIgnoreTypeButtonBlacklist:SetChecked(not DCP_SavedPerCharacter.invertIgnored)
+        DCP_OptionsFrameIgnoreTypeButtonWhitelist:SetChecked(DCP_SavedPerCharacter.invertIgnored)
+        DCP_OptionsFrameIgnoreBox:SetText(DCP_SavedPerCharacter.ignoredSpells)
+        DCP_OptionsFramePetColorBox:GetNormalTexture():SetVertexColor(unpack(DCP_Saved.petOverlay))
+        syncingOptions = false
+    end)
 end
 
 
--- Reuse the full options panel in a scrollable Settings canvas. The standalone
--- form remains available when testing/unlocking the pulse, away from Settings.
+-- Flat Settings canvas; the original /dcp window remains a separate frame.
 function DCP:OpenFloatingOptions()
+    if SettingsPanel and SettingsPanel:IsShown() then HideUIPanel(SettingsPanel) end
     if not DCP_OptionsFrame then self:CreateOptionsFrame() end
-    local frame = DCP_OptionsFrame
-    if frame.settingsEmbedded and SettingsPanel then HideUIPanel(SettingsPanel) end
-    frame.settingsEmbedded = false
-    frame:SetParent(UIParent)
-    frame:ClearAllPoints()
-    frame:SetPoint("CENTER", UIParent)
-    frame:SetFrameStrata("FULLSCREEN_DIALOG")
-    frame:SetMovable(true)
-    local registered = false
-    for _, name in ipairs(UISpecialFrames) do
-        if name == "DCP_OptionsFrame" then registered = true break end
-    end
-    if not registered then tinsert(UISpecialFrames, "DCP_OptionsFrame") end
-    frame:Show()
+    DCP_OptionsFrame:Show()
 end
 
 function DCP:CloseOptionsFrame()
-    if DCP_OptionsFrame.settingsEmbedded and SettingsPanel then
-        HideUIPanel(SettingsPanel)
-    else
-        DCP_OptionsFrame:Hide()
+    DCP_OptionsFrame:Hide()
+end
+
+function DCP:BuildSettingsPage(panel)
+    local scroll = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", 4, -4)
+    scroll:SetPoint("BOTTOMRIGHT", -28, 8)
+    local content = CreateFrame("Frame", nil, scroll)
+    content:SetSize(616, 610)
+    scroll:SetScrollChild(content)
+    local function fitContent(_, width)
+        if width > 0 then content:SetScale(math.min(1, width / 616)) end
     end
+    scroll:SetScript("OnSizeChanged", fitContent)
+    fitContent(scroll, scroll:GetWidth())
+
+    local function label(text, font, x, y)
+        local region = content:CreateFontString(nil, "ARTWORK", font or "GameFontHighlight")
+        region:SetPoint("TOPLEFT", content, "TOPLEFT", x, y)
+        region:SetJustifyH("LEFT")
+        region:SetText(text)
+        return region
+    end
+    local icon = content:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(48, 48)
+    icon:SetPoint("TOPLEFT", content, "TOPLEFT", 20, -12)
+    icon:SetTexture("Interface\\AddOns\\Doom_CooldownPulse_Forever\\Media\\Icon.tga")
+    label("Doom CooldownPulse - Forever", "GameFontNormalLarge", 84, -16)
+    local subtitle = label("Customize your cooldown flashes. Use /dcp for the floating window.", "GameFontHighlightSmall", 84, -40)
+    subtitle:SetTextColor(0.7, 0.7, 0.7)
+    label("Appearance", "GameFontNormal", 20, -82)
+    label("Timing", "GameFontNormal", 332, -82)
+
+    local syncing = false
+    local sliderFrames = {}
+    local positions = {{20,-112}, {332,-112}, {332,-176}, {20,-176}, {332,-240}, {20,-240}, {332,-304}}
+    for i, definition in ipairs(optionSliders) do
+        local slider = CreateFrame("Slider", "DCP_ForeverSettingsSlider"..i, content, "OptionsSliderTemplate")
+        slider:SetPoint("TOPLEFT", content, "TOPLEFT", positions[i][1], positions[i][2])
+        slider:SetWidth(244)
+        slider:SetMinMaxValues(definition.min, definition.max)
+        slider:SetValueStep(definition.step)
+        slider:SetObeyStepOnDrag(true)
+        getglobal("DCP_ForeverSettingsSlider"..i.."Text"):SetText(definition.text)
+        getglobal("DCP_ForeverSettingsSlider"..i.."Low"):SetText(definition.min)
+        getglobal("DCP_ForeverSettingsSlider"..i.."High"):SetText(definition.max)
+        local valueText = slider:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        valueText:SetPoint("TOP", slider, "BOTTOM", 0, -3)
+        slider:SetScript("OnValueChanged", function(self, value)
+            valueText:SetText(format("%.1f", value))
+            if syncing then return end
+            DCP_Saved[definition.value] = value
+            RefreshLocals()
+        end)
+        sliderFrames[i] = slider
+    end
+
+    local function checkbox(name, text, x, y, onClick)
+        local button = CreateFrame("CheckButton", name, content, "UICheckButtonTemplate")
+        button:SetPoint("TOPLEFT", content, "TOPLEFT", x-4, y)
+        local textRegion = content:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+        textRegion:SetPoint("LEFT", button, "RIGHT", 0, 0)
+        textRegion:SetText(text)
+        button:SetScript("OnClick", onClick)
+        return button
+    end
+    local showNames = checkbox("DCP_ForeverSettingsSpellNames", "Show spell names", 20, -298, function(self)
+        DCP_Saved.showSpellName = self:GetChecked() == true
+        RefreshLocals()
+    end)
+    label("Pets and spell filters", "GameFontNormal", 20, -364)
+    local showPets = checkbox("DCP_ForeverSettingsPetPulses", "Show pet cooldown pulses", 20, -384, function(self)
+        DCP_SavedPerCharacter.showPetCooldowns = self:GetChecked() == true
+        RefreshLocals()
+    end)
+    label("Pet overlay color", "GameFontHighlight", 332, -392)
+    local color = CreateFrame("Button", "DCP_ForeverSettingsPetColor", content)
+    color:SetSize(24, 24)
+    color:SetPoint("TOPLEFT", content, "TOPLEFT", 478, -384)
+    local swatch = color:CreateTexture(nil, "ARTWORK")
+    swatch:SetAllPoints(color)
+    color:SetScript("OnClick", function()
+        local r,g,b = unpack(DCP_Saved.petOverlay)
+        ColorPickerFrame:SetupColorPickerAndShow({
+            r=r, g=g, b=b, hasOpacity=false,
+            swatchFunc=function()
+                DCP_Saved.petOverlay = {ColorPickerFrame:GetColorRGB()}
+                RefreshLocals()
+            end,
+            cancelFunc=function()
+                DCP_Saved.petOverlay = {r,g,b}
+                RefreshLocals()
+            end,
+        })
+    end)
+
+    label("Spell filter", "GameFontHighlight", 20, -436)
+    local blacklist = CreateFrame("CheckButton", "DCP_ForeverSettingsBlacklist", content, "UIRadioButtonTemplate")
+    blacklist:SetPoint("TOPLEFT", content, "TOPLEFT", 174, -432)
+    label("Blacklist", "GameFontHighlightSmall", 198, -436)
+    local whitelist = CreateFrame("CheckButton", "DCP_ForeverSettingsWhitelist", content, "UIRadioButtonTemplate")
+    whitelist:SetPoint("TOPLEFT", content, "TOPLEFT", 304, -432)
+    label("Whitelist", "GameFontHighlightSmall", 328, -436)
+    blacklist:SetScript("OnClick", function()
+        DCP_SavedPerCharacter.invertIgnored = false
+        RefreshLocals()
+    end)
+    whitelist:SetScript("OnClick", function()
+        DCP_SavedPerCharacter.invertIgnored = true
+        RefreshLocals()
+    end)
+    local filter = CreateFrame("EditBox", "DCP_ForeverSettingsIgnoreBox", content, "InputBoxTemplate")
+    filter:SetAutoFocus(false)
+    filter:SetSize(560, 32)
+    filter:SetPoint("TOPLEFT", content, "TOPLEFT", 24, -462)
+    local function saveFilter(self)
+        if syncing then return end
+        DCP_SavedPerCharacter.ignoredSpells = self:GetText()
+        RefreshLocals()
+    end
+    filter:SetScript("OnEditFocusLost", saveFilter)
+    filter:SetScript("OnEnterPressed", function(self) saveFilter(self) self:ClearFocus() end)
+    local hint = label("Separate spell names or IDs with commas. Changes apply immediately.", "GameFontHighlightSmall", 20, -504)
+    hint:SetTextColor(0.7, 0.7, 0.7)
+
+    local function runFloatingButton(index)
+        DCP:OpenFloatingOptions()
+        local button = getglobal("DCP_OptionsFrameButton"..index)
+        button:GetScript("OnClick")(button)
+    end
+    local actions = {
+        {"Test", function() runFloatingButton(2) end},
+        {"Move icon", function()
+            DCP:OpenFloatingOptions()
+            local button = DCP_OptionsFrameButton3
+            if button:GetText() == "Unlock" then button:GetScript("OnClick")(button) end
+        end},
+        {"Floating options", function() DCP:OpenFloatingOptions() end},
+        {"Restore defaults", function()
+            if not DCP_OptionsFrame then DCP:CreateOptionsFrame() DCP_OptionsFrame:Hide() end
+            local button = DCP_OptionsFrameButton4
+            button:GetScript("OnClick")(button)
+        end},
+    }
+    for i, action in ipairs(actions) do
+        local button = CreateFrame("Button", "DCP_ForeverSettingsAction"..i, content, "UIPanelButtonTemplate")
+        button:SetSize(130, 26)
+        button:SetPoint("TOPLEFT", content, "TOPLEFT", 20+(i-1)*144, -548)
+        button:SetText(action[1])
+        button:SetScript("OnClick", action[2])
+    end
+
+    refreshSettingsPage = function()
+        syncing = true
+        for i, definition in ipairs(optionSliders) do sliderFrames[i]:SetValue(DCP_Saved[definition.value]) end
+        showNames:SetChecked(DCP_Saved.showSpellName == true)
+        showPets:SetChecked(DCP_SavedPerCharacter.showPetCooldowns)
+        blacklist:SetChecked(not DCP_SavedPerCharacter.invertIgnored)
+        whitelist:SetChecked(DCP_SavedPerCharacter.invertIgnored)
+        -- Preserve unfinished typing when a slider or checkbox is changed.
+        if not filter:HasFocus() then filter:SetText(DCP_SavedPerCharacter.ignoredSpells) end
+        swatch:SetColorTexture(unpack(DCP_Saved.petOverlay))
+        syncing = false
+    end
+    refreshSettingsPage()
 end
 
 function DCP:RegisterSettingsCategory()
     if settingsCategory then return true end
-    if not (Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory) then
-        return false
-    end
+    if not (Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory) then return false end
     local panel = CreateFrame("Frame", "DCP_ForeverSettingsPanel", UIParent)
     panel:Hide()
-    local scroll = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", 16, -16)
-    scroll:SetPoint("BOTTOMRIGHT", -32, 16)
-    local content = CreateFrame("Frame", nil, scroll)
-    content:SetSize(380, 700)
-    scroll:SetScrollChild(content)
+    local built = false
     panel:SetScript("OnShow", function()
-        if not DCP_OptionsFrame then DCP:CreateOptionsFrame() end
-        local frame = DCP_OptionsFrame
-        frame:Hide()
-        frame.settingsEmbedded = true
-        frame:SetParent(content)
-        frame:ClearAllPoints()
-        frame:SetPoint("TOPLEFT", content, "TOPLEFT", 75, -20)
-        frame:SetFrameStrata(panel:GetFrameStrata())
-        frame:SetMovable(false)
-        -- Escape should close Settings, rather than hiding only its child canvas.
-        for i = #UISpecialFrames, 1, -1 do
-            if UISpecialFrames[i] == "DCP_OptionsFrame" then tremove(UISpecialFrames, i) end
-        end
-        frame:Show()
-    end)
-    panel:SetScript("OnHide", function()
-        if DCP_OptionsFrame and DCP_OptionsFrame.settingsEmbedded then DCP_OptionsFrame:Hide() end
+        if not built then self:BuildSettingsPage(panel) built = true end
+        refreshSettingsPage()
     end)
     settingsCategory = Settings.RegisterCanvasLayoutCategory(panel, "Doom CooldownPulse - Forever")
     Settings.RegisterAddOnCategory(settingsCategory)
