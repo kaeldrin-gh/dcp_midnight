@@ -84,10 +84,12 @@ function hooksecurefunc(owner, method, callback)
     else hooks[method] = callback end
 end
 local spells, items, slots = {}, {}, {}
+local spellNames = {}
 C_Spell = {
     GetSpellInfo = function(id)
         assert(not issecretvalue(id))
-        return {name = "Spell " .. id, iconID = id}
+        if spellNames[id] == false then return nil end
+        return {name = spellNames[id] or ("Spell " .. id), iconID = id}
     end,
     GetSpellCooldown = function(id) return spells[id] end,
 }

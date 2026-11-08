@@ -161,6 +161,25 @@ local function InitializeSavedVariables()
     end
 end
 
+local function IsSecretValue(value)
+    return issecretvalue and issecretvalue(value) or false
+end
+
+-- Internal participation checks can emit player spellcast events but are not
+-- ability cooldowns. IDs work across locales and before spell names are cached.
+local internalSpellIDs = {
+    [1292640] = true, -- Active Participant Check
+    [1292641] = true, -- Is Active Participant
+    [1292671] = true, -- Is Active Participant - Cancel Aura
+}
+
+local function IsInternalSpell(spellID, name)
+    if not IsSecretValue(spellID) and internalSpellIDs[spellID] then
+        return true
+    end
+    return not IsSecretValue(name) and type(name) == "string" and name:sub(1, 5) == "[DNT]"
+end
+
 local function IsAnimatingCooldownByName(name)
     for i, details in pairs(animating) do
         if details[3] == name then
@@ -172,6 +191,7 @@ local function IsAnimatingCooldownByName(name)
 end
 
 local function QueueAnimation(texture, isPet, name)
+    if IsInternalSpell(nil, name) then return end
     if isPet and not showPetCooldowns then return end
     if texture and not IsAnimatingCooldownByName(name) then
         tinsert(animating, {texture, isPet, name})
@@ -180,10 +200,6 @@ local function QueueAnimation(texture, isPet, name)
     if (not DCP:IsMouseEnabled()) then
         DCP:SetScript("OnUpdate", OnUpdate)
     end
-end
-
-local function IsSecretValue(value)
-    return issecretvalue and issecretvalue(value) or false
 end
 
 local function SafeNumber(value)
@@ -490,7 +506,7 @@ OnUpdate = function(_,update)
                 local ignoredByName = (ignoredSpells[cooldown.name] ~= nil)
                 local ignoredByTrackingID = (ignoredSpells[tostring(watchedID)] ~= nil)
                 local ignoredBySpellID = (cooldown.spellID ~= nil and ignoredSpells[tostring(cooldown.spellID)] ~= nil)
-                if ((ignoredByName or ignoredByTrackingID or ignoredBySpellID) ~= invertIgnored) then
+                if IsInternalSpell(cooldown.spellID, cooldown.name) or ((ignoredByName or ignoredByTrackingID or ignoredBySpellID) ~= invertIgnored) then
                     spellWatching[watchedID] = nil
                 else
                     local duration = SafeNumber(cooldown.duration)
@@ -821,6 +837,7 @@ function DCP:UNIT_SPELLCAST_SUCCEEDED(unit, castGUID, spellID)
     if IsSecretValue(unit) or IsSecretValue(spellID) then
         return
     end
+    if IsInternalSpell(spellID) then return end
     if unit == "pet" and not showPetCooldowns then return end
     if ((unit == "player" or unit == "pet") and spellID) then
         
@@ -828,6 +845,7 @@ function DCP:UNIT_SPELLCAST_SUCCEEDED(unit, castGUID, spellID)
         local isTrinketSpell = false
         local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
         local spellName = info and info.name
+        if IsInternalSpell(spellID, spellName) then return end
         local spellTexture = info and info.iconID
 
         if spellName or spellTexture then

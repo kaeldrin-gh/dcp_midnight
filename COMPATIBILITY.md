@@ -1,5 +1,17 @@
 # Retail compatibility candidate — 2026-11-05
 
+## Version 1.1.1 — internal spell flash fix (2026-11-08)
+
+Exclude the internal Active Participant checks by spell ID across locales, and
+exclude spells whose readable names begin with `[DNT]`. Apply the built-in filter
+before enrollment, when delayed spell data becomes available, and before queueing
+an animation. The exclusion is independent of the user's blacklist/whitelist.
+
+Four new mocked checks reproduce the problem in 1.1 and pass in 1.1.1: localized
+participation IDs, DNT enrollment/queue suppression, late spell-name data, and
+whitelist handling while retaining normal abilities. All 28 mocked checks pass.
+The GCD fix, trinket handling, and per-character pet toggle are unchanged.
+
 Based on `kaeldrin-gh/dcp_midnight` commit `9369fa1`.
 This is a test build, not a confirmed in-game fix for the user reports.
 

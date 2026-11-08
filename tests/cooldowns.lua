@@ -1,7 +1,7 @@
 local passed = 0
 local function reset()
     now = 100
-    wipe(spells); wipe(items); wipe(slots)
+    wipe(spells); wipe(items); wipe(slots); wipe(spellNames)
     wipe(spellWatching); wipe(spellCooldowns)
     wipe(itemWatching); wipe(itemCooldowns); wipe(animating)
     DCP_Saved, DCP_SavedPerCharacter = nil, nil
@@ -337,6 +337,56 @@ test("Defaults restores both the checkbox and pet pulse behavior", function()
     assert(DCP_OptionsFramePetPulsesCheckButton:GetChecked() == true)
     QueueAnimation(531, true, "Pet ability")
     assert(#animating == 1)
+end)
+
+test("participation checks are excluded by ID even with localized names", function()
+    for _, id in ipairs({1292640, 1292641, 1292671}) do
+        spellNames[id] = "Localized internal participation check"
+        spells[id] = {startTime = 100, duration = 30, isActive = true}
+        DCP:UNIT_SPELLCAST_SUCCEEDED("player", nil, id)
+        DCP:UNIT_SPELLCAST_SUCCEEDED("pet", nil, id)
+    end
+    tick(100.6)
+    assert(next(spellWatching) == nil and next(spellCooldowns) == nil)
+    assert(#animating == 0)
+end)
+
+test("DNT spells are excluded from tracking and the animation queue", function()
+    spellNames[601] = "[DNT] Is Active Participant"
+    spells[601] = {startTime = 100, duration = 30, isActive = true}
+    DCP:UNIT_SPELLCAST_SUCCEEDED("player", nil, 601)
+    tick(100.6)
+    assert(next(spellWatching) == nil and next(spellCooldowns) == nil)
+    QueueAnimation(601, false, spellNames[601])
+    assert(#animating == 0)
+end)
+
+test("late spell data cannot enroll an internal spell", function()
+    spellNames[602] = false
+    spells[602] = {startTime = 100, duration = 30, isActive = true}
+    DCP:UNIT_SPELLCAST_SUCCEEDED("player", nil, 602)
+    spellNames[602] = "[DNT] Internal check loaded later"
+    tick(100.6)
+    assert(next(spellWatching) == nil and next(spellCooldowns) == nil)
+    assert(#animating == 0)
+end)
+
+test("internal exclusion cannot be overridden by a whitelist", function()
+    DCP_SavedPerCharacter.ignoredSpells = "603"
+    DCP_SavedPerCharacter.invertIgnored = true
+    RefreshLocals()
+    spellNames[603] = "[DNT] Internal check"
+    spells[603] = {startTime = 100, duration = 30, isActive = true}
+    DCP:UNIT_SPELLCAST_SUCCEEDED("player", nil, 603)
+    tick(100.6)
+    assert(next(spellWatching) == nil and next(spellCooldowns) == nil)
+    -- A regular ability containing those letters is still allowed.
+    spellNames[603] = "DNT Burst"
+    DCP:UNIT_SPELLCAST_SUCCEEDED("player", nil, 603)
+    tick(101.2)
+    spells[603] = {startTime = 0, duration = 0, isActive = false}
+    tick(130)
+    assert(#animating == 1 and animating[1][1] == 603)
 end)
 
 print(passed .. " compatibility checks passed (mocked Lua 5.1; in-game verification required)")
