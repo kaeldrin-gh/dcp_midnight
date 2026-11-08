@@ -4,10 +4,10 @@ local addonPath = (arg and arg[1]) or "Doom_CooldownPulse_Forever.lua"
 local addon = assert(loadfile(addonPath))
 local passed = 0
 
-local function setup(settings, characterSettings)
+local function setup(settings, characterSettings, nativeSettings)
     local env = setmetatable({}, {__index = _G})
     env._G = env
-    local state = {now = 100, frames = {}, spells = {}, items = {}, slots = {}, hooks = {}, pulses = {}}
+    local state = {now = 100, frames = {}, spells = {}, items = {}, slots = {}, hooks = {}, pulses = {}, spellNames = {}, messages = {}}
     env.DCP_Saved = settings
     env.DCP_SavedPerCharacter = characterSettings
     local methods = {}
@@ -18,6 +18,25 @@ local function setup(settings, characterSettings)
         return f
     end
     function methods:SetScript(key, value) self.scripts[key] = value end
+    function methods:SetParent(parent) self.parent = parent end
+    function methods:GetParent() return rawget(self, "parent") end
+    function methods:SetPoint(...) self.point = {...} end
+    function methods:ClearAllPoints() self.point = nil end
+    function methods:SetFrameStrata(strata) self.strata = strata end
+    function methods:GetFrameStrata() return rawget(self, "strata") or "MEDIUM" end
+    function methods:SetMovable(value) self.movable = value end
+    function methods:SetScrollChild(child) self.scrollChild = child end
+    function methods:IsShown() return rawget(self, "shown") == true end
+    function methods:Show()
+        if self:IsShown() then return end
+        self.shown = true
+        if self.scripts.OnShow then self.scripts.OnShow(self) end
+    end
+    function methods:Hide()
+        local wasShown = self:IsShown()
+        self.shown = false
+        if wasShown and self.scripts.OnHide then self.scripts.OnHide(self) end
+    end
     function methods:RegisterEvent(event) self.events[event] = true end
     function methods:RegisterUnitEvent(event, ...) self.events[event] = {...} end
     function methods:UnregisterEvent(event) self.events[event] = nil end
@@ -52,8 +71,9 @@ local function setup(settings, characterSettings)
     end
     function methods:GetTexture() return rawget(self, "texture") end
     env.UIParent = frame()
-    env.CreateFrame = function(_, name, parent, template)
+    env.CreateFrame = function(kind, name, parent, template)
         local f = frame(name)
+        f.kind, f.parent = kind, parent
         if name and template == "OptionsSliderTemplate" then
             for _, suffix in ipairs({"Text", "Low", "High"}) do frame(name .. suffix) end
         end
@@ -63,6 +83,7 @@ local function setup(settings, characterSettings)
     env.getglobal = function(name) return env[name] end
     env.ceil = math.ceil
     env.PlaySound = function() end
+    env.print = function(message) table.insert(state.messages, message) end
     env.GetTime = function() return state.now end
     env.STANDARD_TEXT_FONT = "font"
     env.tinsert, env.tremove, env.format = table.insert, table.remove, string.format
@@ -83,7 +104,7 @@ local function setup(settings, characterSettings)
         return {startTime = 0, duration = 0, isActive = false, isEnabled = true}
     end
     env.C_Spell = {
-        GetSpellInfo = function(id) return {name = "Spell " .. id, iconID = id} end,
+        GetSpellInfo = function(id) return {name = state.spellNames[id] or "Spell " .. id, iconID = id} end,
         GetSpellCooldown = function(id)
             local data = state.spells[id]
             if type(data) == "function" then return data() end
@@ -119,6 +140,32 @@ local function setup(settings, characterSettings)
     env.UseInventoryItem = function() end
     env.hooksecurefunc = function(name, callback) state.hooks[name] = callback end
     env.GetActionInfo = function() return "item", state.actionItem end
+    function state:installSettings()
+        self.settingsPanel = frame()
+        env.SettingsPanel = self.settingsPanel
+        env.HideUIPanel = function(panel) panel:Hide() end
+        self.settingsPanel:SetScript("OnHide", function()
+            if self.settingsCanvas then self.settingsCanvas:Hide() end
+        end)
+        env.Settings = {
+            RegisterCanvasLayoutCategory = function(panel, name)
+                self.settingsRegistrations = (self.settingsRegistrations or 0) + 1
+                self.settingsCanvas, self.settingsName = panel, name
+                return {GetID = function() return 9001 end}
+            end,
+            RegisterAddOnCategory = function(category)
+                assert(category:GetID() == 9001)
+                self.settingsRegistered = true
+            end,
+            OpenToCategory = function(id)
+                assert(id == 9001)
+                self.settingsOpenedID = id
+                self.settingsPanel:Show()
+                self.settingsCanvas:Show()
+            end,
+        }
+    end
+    if nativeSettings then state:installSettings() end
     setfenv(addon, env)("Doom_CooldownPulse_Forever")
     state.dcp = state.frames[1]
     function state:event(event, ...)
@@ -139,6 +186,7 @@ local function setup(settings, characterSettings)
     assert(env.DCP_Saved == settings, "initialized on a different addon's event")
     state:event("ADDON_LOADED", "Doom_CooldownPulse_Forever")
     function state:options() env.SlashCmdList.DOOMCOOLDOWNPULSE() end
+    function state:command(message) env.SlashCmdList.DOOMCOOLDOWNPULSE(message) end
     function state:setPetPulses(enabled)
         if not env.DCP_OptionsFrame then self:options() end
         local checkbox = env.DCP_OptionsFramePetPulsesCheckButton
@@ -444,6 +492,203 @@ test("Defaults restores checkbox and pet pulse behavior", function()
     s.petID, s.petCooldown = 60, cooldown(5)
     s:cast(60, "pet"); s:tick(7)
     assert(#s.pulses == 1 and s.pulses[1] == 60)
+end)
+
+
+test("explicit DNT developer spell names do not flash", function()
+    for _, name in ipairs({"[DNT] Internal Check", "(DNT) Engine Check", "  [dnt] Internal Check"}) do
+        local s = setup()
+        s.spellNames[70], s.spells[70] = name, cooldown(5)
+        s:cast(70); s:tick(7)
+        assert(#s.pulses == 0, "internal spell was shown: " .. name)
+        s:command("last")
+        assert(#s.messages == 1 and s.messages[1]:find("No cooldown pulses", 1, true))
+    end
+end)
+
+test("DNT identification after the cast is still filtered before enrollment", function()
+    local s = setup()
+    s.spells[71] = cooldown(5)
+    s:cast(71); s:tick(0.2)
+    s.spellNames[71] = "[DNT] Late Metadata"
+    s:tick(7)
+    assert(#s.pulses == 0)
+end)
+
+test("ordinary names containing developer-like text are preserved", function()
+    for _, name in ipairs({"DNT Strike", "Strike [DNT]", "Unknown Emblem Ability"}) do
+        local s = setup()
+        s.spellNames[72], s.spells[72] = name, cooldown(5)
+        s:cast(72); s:tick(7)
+        assert(#s.pulses == 1 and s.pulses[1] == 72)
+    end
+end)
+
+test("history identifies the displayed unknown spell by name and ID", function()
+    local s = setup()
+    s.spellNames[73], s.spells[73] = "Unknown Emblem Ability", cooldown(5)
+    s:cast(73); s:tick(4); s:command("last")
+    assert(#s.messages == 1 and s.messages[1]:find("No cooldown pulses", 1, true))
+    s.messages = {}
+    s:tick(2); s:command("  LAST  ")
+    assert(#s.messages == 2)
+    assert(s.messages[2]:find("Unknown Emblem Ability | spell ID 73", 1, true))
+    assert(s.env.DCP_OptionsFrame == nil, "history opened options")
+end)
+
+test("history distinguishes pet and item identifiers", function()
+    local s = setup()
+    s.petID, s.petCooldown = 74, cooldown(3)
+    s.actionItem, s.items[75] = 75, cooldown(5)
+    s:cast(74, "pet"); s.hooks.UseAction(1); s:tick(8); s:command("last")
+    assert(#s.messages == 3)
+    assert(s.messages[2]:find("Item 75 | item ID 75", 1, true))
+    assert(s.messages[3]:find("Spell 74 | pet spell ID 74", 1, true))
+end)
+
+test("history contains visible pulses rather than pending queue entries", function()
+    local s = setup({holdTime = 3})
+    s.spells[76], s.spells[77] = cooldown(3), cooldown(3.2)
+    s:cast(76); s:cast(77); s:tick(3.4); s:command("last")
+    assert(#s.messages == 2 and s.messages[2]:find("spell ID 76", 1, true))
+    s.messages = {}
+    s:tick(5); s:command("last")
+    assert(#s.messages == 3 and s.messages[2]:find("spell ID 77", 1, true))
+end)
+
+test("history stays bounded and displays newest first", function()
+    local s = setup()
+    for id = 80, 91 do
+        s.spells[id] = {startTime = s.now, duration = 3, isEnabled = true, isActive = true}
+        s:cast(id); s:tick(5)
+    end
+    s:command("last")
+    assert(#s.messages == 11, "history should contain ten entries plus its header")
+    assert(s.messages[2]:find("spell ID 91", 1, true))
+    assert(s.messages[11]:find("spell ID 82", 1, true))
+end)
+
+test("clearing history preserves ongoing cooldown tracking", function()
+    local s = setup()
+    s.spells[92], s.spells[93] = cooldown(3), cooldown(10)
+    s:cast(92); s:cast(93); s:tick(5); s:command("last clear")
+    s.messages = {}
+    s:command("last")
+    assert(#s.messages == 1 and s.messages[1]:find("No cooldown pulses", 1, true))
+    s.messages = {}
+    s:tick(7); s:command("last")
+    assert(#s.messages == 2 and s.messages[2]:find("spell ID 93", 1, true))
+end)
+
+test("options Test preview does not populate cooldown history", function()
+    local s = setup()
+    s:options()
+    local button = s.env.DCP_OptionsFrameButton2
+    button.scripts.OnClick(button)
+    s:tick(1.5); s:command("last")
+    assert(#s.messages == 1 and s.messages[1]:find("No cooldown pulses", 1, true))
+end)
+
+test("filtered spells cannot be forced through with a whitelist", function()
+    local s = setup(nil, {ignoredSpells = "94", invertIgnored = true})
+    s.spellNames[94], s.spells[94] = "[DNT] Whitelisted Internal Check", cooldown(5)
+    s:cast(94); s:tick(7)
+    assert(#s.pulses == 0)
+end)
+
+test("suppressed pet spells do not appear in pulse history", function()
+    local s = setup(nil, {ignoredSpells = "", invertIgnored = false, showPetCooldowns = false})
+    s.petID, s.petCooldown = 95, cooldown(5)
+    s:cast(95, "pet"); s:tick(7); s:command("last")
+    assert(#s.messages == 1 and s.messages[1]:find("No cooldown pulses", 1, true))
+end)
+
+test("restricted cast IDs are not converted into diagnostic text", function()
+    local s = setup()
+    s:cast(secret); s:tick(7); s:command("last")
+    assert(#s.messages == 1 and s.messages[1]:find("No cooldown pulses", 1, true))
+end)
+
+
+test("native Settings category registers once without opening options", function()
+    local s = setup(nil, nil, true)
+    assert(s.settingsRegistrations == 1 and s.settingsRegistered)
+    assert(s.settingsName == "Doom CooldownPulse - Forever")
+    assert(s.env.DCP_OptionsFrame == nil and not s.settingsPanel:IsShown())
+    s.dcp:PLAYER_LOGIN()
+    assert(s.settingsRegistrations == 1)
+end)
+
+test("dcp opens the full options in the scrollable Settings canvas", function()
+    local s = setup(nil, nil, true)
+    s:options()
+    local options = s.env.DCP_OptionsFrame
+    assert(s.settingsOpenedID == 9001 and s.settingsPanel:IsShown())
+    assert(options.settingsEmbedded and options:IsShown() and options.movable == false)
+    local content = options:GetParent()
+    assert(content:GetParent().kind == "ScrollFrame" and content:GetParent().scrollChild == content)
+    for _, name in ipairs({"Slider1", "Slider7", "PetPulsesCheckButton", "PetColorBox", "SpellNameCheckButton", "IgnoreBox", "Button4"}) do
+        assert(s.env["DCP_OptionsFrame" .. name], "missing full options control: " .. name)
+    end
+    for _, name in ipairs(s.env.UISpecialFrames) do assert(name ~= "DCP_OptionsFrame") end
+    s:setPetPulses(false)
+    assert(s.env.DCP_SavedPerCharacter.showPetCooldowns == false)
+end)
+
+test("history commands do not open the Settings page", function()
+    local s = setup(nil, nil, true)
+    s:command("last"); s:command("last clear")
+    assert(not s.settingsOpenedID and not s.settingsPanel:IsShown() and s.env.DCP_OptionsFrame == nil)
+end)
+
+test("Unlock detaches options and reopening Settings reuses them", function()
+    local s = setup(nil, nil, true)
+    s:options()
+    local options = s.env.DCP_OptionsFrame
+    local button = s.env.DCP_OptionsFrameButton3
+    button.scripts.OnClick(button)
+    assert(not s.settingsPanel:IsShown() and not options.settingsEmbedded)
+    assert(options:GetParent() == s.env.UIParent and options.movable and s.dcp:IsMouseEnabled())
+    local count = 0
+    for _, name in ipairs(s.env.UISpecialFrames) do if name == "DCP_OptionsFrame" then count = count + 1 end end
+    assert(count == 1)
+    s:options()
+    assert(s.env.DCP_OptionsFrame == options and options.settingsEmbedded and s.settingsPanel:IsShown())
+end)
+
+test("Test detaches options and previews the pulse", function()
+    local s = setup(nil, nil, true)
+    s:options()
+    local button = s.env.DCP_OptionsFrameButton2
+    button.scripts.OnClick(button); s:tick(0.2)
+    assert(not s.settingsPanel:IsShown() and not s.env.DCP_OptionsFrame.settingsEmbedded)
+    assert(#s.pulses == 1)
+end)
+
+test("Close hides Settings and its embedded child", function()
+    local s = setup(nil, nil, true)
+    s:options()
+    local button = s.env.DCP_OptionsFrameButton1
+    button.scripts.OnClick(button)
+    assert(not s.settingsPanel:IsShown() and not s.settingsCanvas:IsShown() and not s.env.DCP_OptionsFrame:IsShown())
+    s:options()
+    assert(s.settingsPanel:IsShown() and s.env.DCP_OptionsFrame:IsShown())
+end)
+
+test("Settings registration retries at login if the API was unavailable", function()
+    local s = setup()
+    assert(s.dcp.events.PLAYER_LOGIN)
+    s:installSettings(); s:event("PLAYER_LOGIN"); s:options()
+    assert(s.settingsRegistrations == 1 and s.settingsPanel:IsShown())
+    assert(not s.dcp.events.PLAYER_LOGIN)
+end)
+
+test("native Defaults applies the same saved pet setting", function()
+    local s = setup(nil, {ignoredSpells = "", invertIgnored = false, showPetCooldowns = false}, true)
+    s:options()
+    local button = s.env.DCP_OptionsFrameButton4
+    button.scripts.OnClick(button)
+    assert(s.env.DCP_SavedPerCharacter.showPetCooldowns and s.env.DCP_OptionsFramePetPulsesCheckButton:GetChecked())
 end)
 
 

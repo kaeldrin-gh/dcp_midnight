@@ -15,6 +15,16 @@ Checked November 5, 2026. Target: **1.60.1 / interface 16001**. The launch UI-so
 
 Other fixes: initialize only on this addon's own `ADDON_LOADED`, and expire short cooldown watch entries after three seconds so they cannot poll forever. Existing saved-variable identifiers and customization controls remain.
 
+## Version 1.0.4: Internal casts, pulse identification, and Settings
+
+The owner reported a sporadic insignia-like flash whose name/ID is still unknown. The existing cast handler can enroll engine-generated player casts; this establishes a possible cause, not the identity of that particular flash. There is no automatic developer-test animation in the addon; its Test preview is triggered only by the options button.
+
+- Exclude explicit `[DNT]` / `(DNT)` name prefixes from spell tracking, checking again when enrolling a watch. Match prefixes only, case-insensitively. Preserve normal spells, including ones absent from a visible spellbook, and preserve independent item-use tracking.
+- Add `/dcp last` for a bounded, session-only history of the ten most recently displayed cooldown pulses, with name, spell/item ID, type, and elapsed seconds. Log at display time, not queue time; skip the options Test preview. `/dcp last clear` clears history without changing watched cooldowns or preferences. No protected value is converted to diagnostic text.
+- Register the complete options frame under **Settings → AddOns → Doom CooldownPulse - Forever** using Forever's [documented canvas registration](https://github.com/Gethe/wow-ui-source/blob/forever/Interface/AddOns/Blizzard_Settings_Shared/Blizzard_ImplementationReadme.lua). A scroll frame accommodates the full 660-unit controls. `/dcp` and its aliases open this category. Test/Unlock detach the panel into the floating form and close Settings, so the preview can be seen and moved. Reopening Settings reuses the same controls. If the Settings API is unavailable at addon load, retry at login and retain the floating fallback.
+
+All **51 mocked Lua 5.1 checks** pass. In game, verify the native Settings page, scrolling, Escape/Close, Test/Unlock, reopening Settings, and unchanged preferences. If the unknown flash remains, capture its `/dcp last` entry before `/reload`; the exact Forever spell has not yet been identified and there is no claim that DNT-prefix filtering alone resolves it.
+
 ## Version 1.0.3: Options footer spacing
 
 The owner's in-game screenshot showed the filter edit box overlapping the upper button row after the pet checkbox was added. Increase the options panel height from 610 to 660 UI units, keeping the button rows anchored to the bottom, and give the edit box an eight-unit gap below the filter radio controls. This reserves space between the filter field and the Defaults/Unlock buttons. Cooldown behavior and saved settings are unchanged. The existing options-creation and behavior checks pass; final appearance needs checking in the client.

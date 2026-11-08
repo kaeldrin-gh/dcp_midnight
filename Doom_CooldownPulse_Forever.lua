@@ -8,6 +8,9 @@ local MINIMUM_FLASH_COOLDOWN = 2.0
 local IsEquippedTrinketReady
 local showPetCooldowns
 local runtimer = 0
+local recentPulses = {}
+local MAX_RECENT_PULSES = 10
+local settingsCategory
 
 local defaultSettings = {
     fadeInTime = 0.3,
@@ -163,6 +166,52 @@ local function InitializeSavedVariables()
     end
 end
 
+-- Forever uses the modern API even though its interface number is 16001.
+-- Never do arithmetic, comparisons, or table-key conversions on secret values.
+local function IsSecret(value)
+    return issecretvalue and issecretvalue(value)
+end
+
+-- Explicit developer markers are not player-facing abilities. Do not guess
+-- from an icon or reject all spells missing from the visible spellbook.
+local function IsInternalSpell(info)
+    if IsSecret(info) or type(info) ~= "table" then return false end
+    local name = info.name
+    if IsSecret(name) or type(name) ~= "string" then return false end
+    name = strtrim(name):upper()
+    return name:match("^%[DNT%]") ~= nil or name:match("^%(DNT%)") ~= nil
+end
+
+-- Record only actual displayed pulses, rather than casts or queued animations.
+-- Session-only, bounded history; protected values are never converted to text.
+local function RecordPulse(details)
+    local spellID, itemID = details[4], details[5]
+    if IsSecret(spellID) or type(spellID) ~= "number" then spellID = nil end
+    if IsSecret(itemID) or type(itemID) ~= "number" then itemID = nil end
+    if not spellID and not itemID then return end -- Skip the options Test preview.
+    local name = details[3]
+    if IsSecret(name) or type(name) ~= "string" then name = "Unknown" end
+    tinsert(recentPulses, {
+        name = name,
+        id = itemID or spellID,
+        kind = itemID and "item" or (details[2] and "pet spell" or "spell"),
+        shownAt = GetTime()
+    })
+    if #recentPulses > MAX_RECENT_PULSES then tremove(recentPulses, 1) end
+end
+
+local function ShowRecentPulses()
+    if #recentPulses == 0 then
+        print("DCP: No cooldown pulses recorded this session.")
+        return
+    end
+    print("DCP: Recent flashes, newest first (history clears on /reload):")
+    for i = #recentPulses, 1, -1 do
+        local entry = recentPulses[i]
+        print(format("DCP: %s | %s ID %d | %.0fs ago", entry.name, entry.kind, entry.id, GetTime() - entry.shownAt))
+    end
+end
+
 local function IsAnimatingCooldownByName(name)
     for i, details in pairs(animating) do
         if details[3] == name then
@@ -173,21 +222,15 @@ local function IsAnimatingCooldownByName(name)
     return false
 end
 
-local function QueueAnimation(texture, isPet, name)
+local function QueueAnimation(texture, isPet, name, spellID, itemID)
     if isPet and not showPetCooldowns then return end
     if texture and not IsAnimatingCooldownByName(name) then
-        tinsert(animating, {texture, isPet, name})
+        tinsert(animating, {texture, isPet, name, spellID, itemID})
     end
 
     if (not DCP:IsMouseEnabled()) then
         DCP:SetScript("OnUpdate", OnUpdate)
     end
-end
-
--- Forever uses the modern API even though its interface number is 16001.
--- Never do arithmetic, comparisons, or table-key conversions on secret values.
-local function IsSecret(value)
-    return issecretvalue and issecretvalue(value)
 end
 
 local function SafeNumber(value)
@@ -492,6 +535,7 @@ OnUpdate = function(_,update)
                         isActive = isActive,
                         -- Sampled only during SPELL_UPDATE_COOLDOWN.
                         isOnGCD = watchedEntry.isOnGCD,
+                        isInternal = IsInternalSpell(info),
                         spellID = watchedEntry[3],
                         isPet = watchedEntry[4]
                     }
@@ -501,7 +545,7 @@ OnUpdate = function(_,update)
                 local ignoredByName = (ignoredSpells[cooldown.name] ~= nil)
                 local ignoredByTrackingID = (ignoredSpells[tostring(watchedID)] ~= nil)
                 local ignoredBySpellID = (cooldown.spellID ~= nil and ignoredSpells[tostring(cooldown.spellID)] ~= nil)
-                if ((ignoredByName or ignoredByTrackingID or ignoredBySpellID) ~= invertIgnored) then
+                if (cooldown.isInternal or ((ignoredByName or ignoredByTrackingID or ignoredBySpellID) ~= invertIgnored)) then
                     spellWatching[watchedID] = nil
                 else
                     local duration = SafeNumber(cooldown.duration)
@@ -622,14 +666,14 @@ OnUpdate = function(_,update)
                 -- A real cooldown should pulse without waiting for that GCD.
                 local elapsedSinceStart = GetTime() - entry.startedAt
                 if entry.hasLongNumericCooldown or elapsedSinceStart > MINIMUM_FLASH_COOLDOWN then
-                    QueueAnimation(cooldown.texture, cooldown.isPet, cooldown.name)
+                    QueueAnimation(cooldown.texture, cooldown.isPet, cooldown.name, cooldown.spellID, cooldown.itemID)
                 end
                 spellCooldowns[i] = nil
             elseif (cooldown.enabled and start and duration) then
                 local remaining = duration-(GetTime()-start)
                 if (remaining <= remainingCooldownWhenNotified) then
                     if not entry.restrictedTiming or GetTime() - entry.startedAt > MINIMUM_FLASH_COOLDOWN then
-                        QueueAnimation(cooldown.texture, cooldown.isPet, cooldown.name)
+                        QueueAnimation(cooldown.texture, cooldown.isPet, cooldown.name, cooldown.spellID, cooldown.itemID)
                     end
                     spellCooldowns[i] = nil
                 end
@@ -642,7 +686,7 @@ OnUpdate = function(_,update)
                     end
 
                     if (elapsedSinceStart == nil or elapsedSinceStart > MINIMUM_FLASH_COOLDOWN) then
-                        QueueAnimation(cooldown.texture, cooldown.isPet, cooldown.name)
+                        QueueAnimation(cooldown.texture, cooldown.isPet, cooldown.name, cooldown.spellID, cooldown.itemID)
                         spellCooldowns[i] = nil
                     else
                         spellCooldowns[i] = nil
@@ -694,7 +738,7 @@ OnUpdate = function(_,update)
                     end
 
                     if shouldFlash then
-                        QueueAnimation(cooldown.texture, cooldown.isPet, cooldown.name)
+                        QueueAnimation(cooldown.texture, cooldown.isPet, cooldown.name, cooldown.spellID, cooldown.itemID)
                         itemCooldowns[i] = nil
                     else
                         itemCooldowns[i] = nil
@@ -719,7 +763,7 @@ OnUpdate = function(_,update)
                         end
 
                         if shouldFlash then
-                            QueueAnimation(cooldown.texture, cooldown.isPet, cooldown.name)
+                            QueueAnimation(cooldown.texture, cooldown.isPet, cooldown.name, cooldown.spellID, cooldown.itemID)
                             itemCooldowns[i] = nil
                         else
                             itemCooldowns[i] = nil
@@ -767,6 +811,7 @@ OnUpdate = function(_,update)
                 local texture = animating[1][1]
                 if texture then
                     DCPT:SetTexture(texture)
+                    RecordPulse(animating[1])
                 else
                     DCPT:SetTexture(nil)
                 end
@@ -802,6 +847,7 @@ function DCP:ADDON_LOADED(addon)
     RefreshLocals()
     self:SetPoint("CENTER",UIParent,"BOTTOMLEFT",DCP_Saved.x,DCP_Saved.y)
     self:UnregisterEvent("ADDON_LOADED")
+    if not self:RegisterSettingsCategory() then self:RegisterEvent("PLAYER_LOGIN") end
 end
 DCP:RegisterEvent("ADDON_LOADED")
 
@@ -847,6 +893,8 @@ function DCP:UNIT_SPELLCAST_SUCCEEDED(unit, castGUID, spellID)
                 end
             end
         end
+
+        if IsInternalSpell(C_Spell.GetSpellInfo(spellID)) then return end
 
         local isPet = (unit == "pet")
         local spellKey = GetSpellTrackingKey(spellID)
@@ -917,7 +965,22 @@ end
 -- Options Frame --
 -------------------
 
-SlashCmdList["DOOMCOOLDOWNPULSE"] = function() if (not DCP_OptionsFrame) then DCP:CreateOptionsFrame() end DCP_OptionsFrame:Show() end
+SlashCmdList["DOOMCOOLDOWNPULSE"] = function(message)
+    local command = strtrim(message or ""):lower()
+    if command == "last" then
+        ShowRecentPulses()
+        return
+    elseif command == "last clear" then
+        wipe(recentPulses)
+        print("DCP: Recent pulse history cleared.")
+        return
+    end
+    if settingsCategory and Settings.OpenToCategory then
+        Settings.OpenToCategory(settingsCategory:GetID())
+    else
+        DCP:OpenFloatingOptions()
+    end
+end
 SLASH_DOOMCOOLDOWNPULSE1 = "/dcp"
 SLASH_DOOMCOOLDOWNPULSE2 = "/cooldownpulse"
 SLASH_DOOMCOOLDOWNPULSE3 = "/doomcooldownpulse"
@@ -934,8 +997,9 @@ function DCP:CreateOptionsFrame()
     }
 
     local buttons = {
-        { text = "Close", func = function(self) self:GetParent():Hide() end },
+        { text = "Close", func = function() DCP:CloseOptionsFrame() end },
         { text = "Test", func = function(self)
+            if DCP_OptionsFrame.settingsEmbedded then DCP:OpenFloatingOptions() end
             DCP_OptionsFrameButton3:SetText("Unlock")
             DCP:EnableMouse(false)
             RefreshLocals()
@@ -943,6 +1007,7 @@ function DCP:CreateOptionsFrame()
             DCP:SetScript("OnUpdate", OnUpdate)
             end },
         { text = "Unlock", func = function(self)
+            if DCP_OptionsFrame.settingsEmbedded then DCP:OpenFloatingOptions() end
             if (self:GetText() == "Unlock") then
                 RefreshLocals()
                 DCP:SetWidth(iconSize)
@@ -985,13 +1050,14 @@ function DCP:CreateOptionsFrame()
       tile=1, tileSize=32, edgeSize=32,
       insets={left=11, right=12, top=12, bottom=11}
     })
+    optionsframe.settingsEmbedded = false
     optionsframe:SetWidth(230)
     optionsframe:SetHeight(660)
     optionsframe:SetPoint("CENTER",UIParent)
     optionsframe:EnableMouse(true)
     optionsframe:SetMovable(true)
     optionsframe:RegisterForDrag("LeftButton")
-    optionsframe:SetScript("OnDragStart", function(self) self:StartMoving() end)
+    optionsframe:SetScript("OnDragStart", function(self) if not self.settingsEmbedded then self:StartMoving() end end)
     optionsframe:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
     optionsframe:SetFrameStrata("FULLSCREEN_DIALOG")
     optionsframe:SetScript("OnHide", function() RefreshLocals() end)
@@ -1144,4 +1210,75 @@ function DCP:CreateOptionsFrame()
         button:SetText(v.text)
         button:SetScript("OnClick", function(self) PlaySound(852) v.func(self) end)
     end
+end
+
+
+-- Reuse the full options panel in a scrollable Settings canvas. The standalone
+-- form remains available when testing/unlocking the pulse, away from Settings.
+function DCP:OpenFloatingOptions()
+    if not DCP_OptionsFrame then self:CreateOptionsFrame() end
+    local frame = DCP_OptionsFrame
+    if frame.settingsEmbedded and SettingsPanel then HideUIPanel(SettingsPanel) end
+    frame.settingsEmbedded = false
+    frame:SetParent(UIParent)
+    frame:ClearAllPoints()
+    frame:SetPoint("CENTER", UIParent)
+    frame:SetFrameStrata("FULLSCREEN_DIALOG")
+    frame:SetMovable(true)
+    local registered = false
+    for _, name in ipairs(UISpecialFrames) do
+        if name == "DCP_OptionsFrame" then registered = true break end
+    end
+    if not registered then tinsert(UISpecialFrames, "DCP_OptionsFrame") end
+    frame:Show()
+end
+
+function DCP:CloseOptionsFrame()
+    if DCP_OptionsFrame.settingsEmbedded and SettingsPanel then
+        HideUIPanel(SettingsPanel)
+    else
+        DCP_OptionsFrame:Hide()
+    end
+end
+
+function DCP:RegisterSettingsCategory()
+    if settingsCategory then return true end
+    if not (Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory) then
+        return false
+    end
+    local panel = CreateFrame("Frame", "DCP_ForeverSettingsPanel", UIParent)
+    panel:Hide()
+    local scroll = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", 16, -16)
+    scroll:SetPoint("BOTTOMRIGHT", -32, 16)
+    local content = CreateFrame("Frame", nil, scroll)
+    content:SetSize(380, 700)
+    scroll:SetScrollChild(content)
+    panel:SetScript("OnShow", function()
+        if not DCP_OptionsFrame then DCP:CreateOptionsFrame() end
+        local frame = DCP_OptionsFrame
+        frame:Hide()
+        frame.settingsEmbedded = true
+        frame:SetParent(content)
+        frame:ClearAllPoints()
+        frame:SetPoint("TOPLEFT", content, "TOPLEFT", 75, -20)
+        frame:SetFrameStrata(panel:GetFrameStrata())
+        frame:SetMovable(false)
+        -- Escape should close Settings, rather than hiding only its child canvas.
+        for i = #UISpecialFrames, 1, -1 do
+            if UISpecialFrames[i] == "DCP_OptionsFrame" then tremove(UISpecialFrames, i) end
+        end
+        frame:Show()
+    end)
+    panel:SetScript("OnHide", function()
+        if DCP_OptionsFrame and DCP_OptionsFrame.settingsEmbedded then DCP_OptionsFrame:Hide() end
+    end)
+    settingsCategory = Settings.RegisterCanvasLayoutCategory(panel, "Doom CooldownPulse - Forever")
+    Settings.RegisterAddOnCategory(settingsCategory)
+    return true
+end
+
+function DCP:PLAYER_LOGIN()
+    self:RegisterSettingsCategory()
+    self:UnregisterEvent("PLAYER_LOGIN")
 end
