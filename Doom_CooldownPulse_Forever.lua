@@ -11,6 +11,10 @@ local runtimer = 0
 local recentPulses = {}
 local MAX_RECENT_PULSES = 10
 local settingsCategory
+local itemSpellSources = {}
+local recentItemUses = {}
+local cachedBagItems = {}
+local ITEM_CAST_GRACE = 5
 
 local optionSliders = {
         { text = "Icon Size", value = "iconSize", min = 30, max = 125, step = 5 },
@@ -490,7 +494,77 @@ local function QueueWatchedItem(itemID, inventorySlot, forceRefresh)
     itemWatching[itemKey] = {GetTime(), "item", texture, inventorySlot, itemID, existingReadyAt}
 end
 
+-- Item effects may have placeholder spell textures (e.g. potion spell 439).
+-- Resolve them to actual carried/equipped items rather than guessing an icon.
+local function GetItemEffectSpellID(itemID)
+    if not C_Item or not C_Item.GetItemSpell then return nil end
+    local _, spellID = C_Item.GetItemSpell(itemID)
+    return SafeNumber(spellID)
+end
+
+local function RefreshItemSpellSources()
+    local current = {}
+    local function remember(itemID, inventorySlot)
+        itemID = SafeNumber(itemID)
+        if not itemID then return end
+        local spellID = GetItemEffectSpellID(itemID)
+        if spellID then
+            current[spellID] = {itemID=itemID, inventorySlot=inventorySlot}
+        end
+    end
+    if C_Container and C_Container.GetContainerNumSlots and C_Container.GetContainerItemID then
+        for bag = 0, NUM_BAG_SLOTS or 4 do
+            cachedBagItems[bag] = cachedBagItems[bag] or {}
+            for slot = 1, C_Container.GetContainerNumSlots(bag) do
+                local itemID = C_Container.GetContainerItemID(bag, slot)
+                if SafeNumber(itemID) then cachedBagItems[bag][slot] = itemID end
+                remember(itemID)
+            end
+        end
+    end
+    for slot = 1, 19 do remember(GetInventoryItemID("player", slot), slot) end
+    -- Bag updates can precede the successful cast for the last item in a stack.
+    for spellID, old in pairs(itemSpellSources) do
+        if not current[spellID] then
+            old.expiresAt = old.expiresAt or GetTime() + ITEM_CAST_GRACE
+            if GetTime() <= old.expiresAt then current[spellID] = old end
+        end
+    end
+    itemSpellSources = current
+    for spellID, source in pairs(recentItemUses) do
+        if GetTime() - source.usedAt > ITEM_CAST_GRACE then recentItemUses[spellID] = nil end
+    end
+end
+
+local function RememberUsedItem(itemID, inventorySlot)
+    local spellID = GetItemEffectSpellID(itemID)
+    if not spellID then return end
+    local source = {itemID=itemID, inventorySlot=inventorySlot,
+        usedAt=GetTime(), expiresAt=GetTime()+ITEM_CAST_GRACE}
+    recentItemUses[spellID], itemSpellSources[spellID] = source, source
+    -- Post-use hooks can run after UNIT_SPELLCAST_SUCCEEDED. Replace the spell
+    -- watch in either event order, leaving one item cooldown with the item icon.
+    local spellKey = GetSpellTrackingKey(spellID)
+    spellWatching[spellKey], spellCooldowns[spellKey] = nil, nil
+end
+
+local function FindItemForCast(spellID)
+    local recent = recentItemUses[spellID]
+    if recent and GetTime() - recent.usedAt <= ITEM_CAST_GRACE then
+        return recent.itemID, recent.inventorySlot
+    end
+    local source = itemSpellSources[spellID]
+    if not source or (source.expiresAt and GetTime() > source.expiresAt) then return nil end
+    -- A carried item may reuse a real class ability. Prefer a known player
+    -- spell unless a recent use hook provides evidence that the item was used.
+    if C_SpellBook and C_SpellBook.IsSpellKnown then
+        if SafeBoolean(C_SpellBook.IsSpellKnown(spellID, Enum.SpellBookSpellBank.Player), false) then return nil end
+    end
+    return source.itemID, source.inventorySlot
+end
+
 local function WatchItemAndSharedTrinket(itemID, knownSlot)
+    RememberUsedItem(itemID, knownSlot)
     local slot = knownSlot or FindEquippedTrinketSlotByItemID(itemID)
 
     -- The directly used item should always refresh its own watch snapshot.
@@ -902,6 +976,11 @@ function DCP:UNIT_SPELLCAST_SUCCEEDED(unit, castGUID, spellID)
                     end
                 end
             end
+            local itemID, inventorySlot = FindItemForCast(spellID)
+            if itemID then
+                WatchItemAndSharedTrinket(itemID, inventorySlot)
+                return
+            end
         end
 
         if IsInternalSpell(C_Spell.GetSpellInfo(spellID)) then return end
@@ -919,6 +998,7 @@ end
 DCP:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "pet")
 
 function DCP:PLAYER_ENTERING_WORLD()
+    RefreshItemSpellSources()
     local inInstance,instanceType = IsInInstance()
     if (inInstance and instanceType == "arena") then
         self:SetScript("OnUpdate", nil)
@@ -929,6 +1009,15 @@ function DCP:PLAYER_ENTERING_WORLD()
     end
 end
 DCP:RegisterEvent("PLAYER_ENTERING_WORLD")
+
+function DCP:BAG_UPDATE_DELAYED() RefreshItemSpellSources() end
+function DCP:PLAYER_EQUIPMENT_CHANGED() RefreshItemSpellSources() end
+function DCP:GET_ITEM_INFO_RECEIVED(_, success)
+    if success then RefreshItemSpellSources() end
+end
+DCP:RegisterEvent("BAG_UPDATE_DELAYED")
+DCP:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+DCP:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 
 function DCP:PLAYER_SPECIALIZATION_CHANGED(unit)
     if (unit == "player") then
@@ -964,10 +1053,18 @@ end
 -- Bag item use is namespaced on the modern client.
 if C_Container and C_Container.UseContainerItem then
     hooksecurefunc(C_Container, "UseContainerItem", function(bag, slot)
-        local itemID = C_Container.GetContainerItemID(bag, slot)
-        if itemID then
-            WatchItemAndSharedTrinket(itemID)
-        end
+        if IsSecret(bag) or IsSecret(slot) then return end
+        local itemID = SafeNumber(C_Container.GetContainerItemID(bag, slot))
+        if not itemID and cachedBagItems[bag] then itemID = cachedBagItems[bag][slot] end
+        if SafeNumber(itemID) then WatchItemAndSharedTrinket(itemID) end
+    end)
+end
+
+if C_Item and C_Item.UseItemByName and C_Item.GetItemInfoInstant then
+    hooksecurefunc(C_Item, "UseItemByName", function(itemInfo)
+        if IsSecret(itemInfo) then return end
+        local itemID = SafeNumber(C_Item.GetItemInfoInstant(itemInfo))
+        if itemID then WatchItemAndSharedTrinket(itemID) end
     end)
 end
 

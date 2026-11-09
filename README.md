@@ -33,6 +33,8 @@ Readable numeric cooldowns support **Show Before Available Time**. When timing v
 
 This build passed mocked Lua 5.1 behavior tests. It still needs validation inside the live Forever client, especially pet autocasts, combat restrictions, and individual items. See [the port notes and in-game checklist](docs/FOREVER_PORT.md).
 
+Consumable use effects are resolved to the carried item so potions use their item icon, name, and cooldown rather than the effect spell's placeholder texture. This also prevents an extra spell-effect flash alongside the item flash. Bag and named-item use paths are supported, including the last item in a stack. In `/dcp last`, a resolved consumable is labeled as an **item ID**.
+
 ## Identifying an unexpected flash
 
 Spells whose names begin with `[DNT]` or `(DNT)` are excluded from spell tracking. The addon does not identify internal spells by their icon or assume that every spell absent from the visible spellbook is invalid.

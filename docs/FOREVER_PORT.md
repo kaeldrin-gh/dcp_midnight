@@ -15,6 +15,16 @@ Checked November 5, 2026. Target: **1.60.1 / interface 16001**. The launch UI-so
 
 Other fixes: initialize only on this addon's own `ADDON_LOADED`, and expire short cooldown watch entries after three seconds so they cannot poll forever. Existing saved-variable identifiers and customization controls remain.
 
+## Version 1.0.7: Consumable effect icons and duplicate tracking
+
+The owner's pulse history identified the insignia-like flash as **Healing Potion, spell ID 439**, not an unidentified developer check. The cast handler recognized trinket effects but could still enroll bag-item effects as ordinary spells, allowing the effect's placeholder texture and shorter spell timer to appear instead of the actual potion icon/cooldown.
+
+Build item-effect mappings from carried bags and equipped items using `C_Item.GetItemSpell`; refresh at world entry, bag/equipment updates, and received item metadata. Retain removed sources for a five-second event-order grace period so consuming the last stack item can still resolve. Track explicit use evidence separately so the actual used item wins when multiple variants share an effect. Prefer known player abilities over an inventory-only match unless a recent use hook confirms item use. Item use hooks remove a matching spell watch regardless of whether the cast event arrived first. Bag-slot snapshots cover post-use hooks after the last item disappears; named-item use is hooked as well.
+
+Resolved effects use the existing item tracking path, item name/icon/cooldown, and item ID in pulse history. No potion spell or icon ID is hardcoded in production. The APIs were checked against Forever's [Item documentation](https://github.com/Gethe/wow-ui-source/blob/forever/Interface/AddOns/Blizzard_APIDocumentationGenerated/ItemDocumentation.lua), [Container documentation](https://github.com/Gethe/wow-ui-source/blob/forever/Interface/AddOns/Blizzard_APIDocumentationGenerated/ContainerDocumentation.lua), and [SpellBook documentation](https://github.com/Gethe/wow-ui-source/blob/forever/Interface/AddOns/Blizzard_APIDocumentationGenerated/SpellBookDocumentation.lua).
+
+All **63 mocked Lua 5.1 checks** pass, including potion placeholder vs. actual item textures/timers, duplicate event orders, last-stack use, shared-effect variants, named item use, late metadata, expired cache entries, learned-spell collisions, and item-ID blacklisting. In game, use a healing potion from a bag, an action bar, and a `/use` macro; include the last item in a stack. Expect one potion icon at the item cooldown's completion and an item-ID entry in `/dcp last`. Actual Forever item cooldown behavior still requires this live check.
+
 ## Version 1.0.6: Settings launcher
 
 Replace the duplicate Settings form with one large **Open /dcp options** button. It closes Settings and opens the existing floating window. `/dcp` and its aliases remain standalone; all sliders, filters, pet controls, and the Unlock/Lock toggle live in that window. No embedded frame, duplicate move button, or duplicate settings state remains. The floating Unlock button shows/unlocks the icon on the first click and hides/locks it on the second. All 51 mocked Lua 5.1 checks pass, including repeated toggling and the launcher path.

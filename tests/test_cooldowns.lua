@@ -7,7 +7,7 @@ local passed = 0
 local function setup(settings, characterSettings, nativeSettings)
     local env = setmetatable({}, {__index = _G})
     env._G = env
-    local state = {now = 100, frames = {}, spells = {}, items = {}, slots = {}, hooks = {}, pulses = {}, spellNames = {}, messages = {}}
+    local state = {now = 100, frames = {}, spells = {}, items = {}, slots = {}, hooks = {}, pulses = {}, spellNames = {}, messages = {}, spellIcons = {}, itemIcons = {}, itemNames = {}, itemSpells = {}, bags = {}, knownSpells = {}, itemIDsByName = {}}
     env.DCP_Saved = settings
     env.DCP_SavedPerCharacter = characterSettings
     local methods = {}
@@ -118,7 +118,7 @@ local function setup(settings, characterSettings, nativeSettings)
         return {startTime = 0, duration = 0, isActive = false, isEnabled = true}
     end
     env.C_Spell = {
-        GetSpellInfo = function(id) return {name = state.spellNames[id] or "Spell " .. id, iconID = id} end,
+        GetSpellInfo = function(id) return {name = state.spellNames[id] or "Spell " .. id, iconID = state.spellIcons[id] or id} end,
         GetSpellCooldown = function(id)
             local data = state.spells[id]
             if type(data) == "function" then return data() end
@@ -126,6 +126,7 @@ local function setup(settings, characterSettings, nativeSettings)
         end,
     }
     env.C_SpellBook = {
+        IsSpellKnown = function(id, bank) assert(bank == 0) return state.knownSpells[id] == true end,
         HasPetSpells = function() return state.petID and 1 or 0 end,
         GetSpellBookItemInfo = function(slot, bank)
             assert(slot == 1 and bank == 1)
@@ -144,15 +145,32 @@ local function setup(settings, characterSettings, nativeSettings)
     end
     env.C_Item = {
         GetItemCooldown = itemCooldown,
-        GetItemNameByID = function(id) return "Item " .. id end,
-        GetItemIconByID = function(id) return id end,
-        GetItemSpell = function(id) return "Item spell " .. id, id + 1000 end,
+        GetItemNameByID = function(id) return state.itemNames[id] or "Item " .. id end,
+        GetItemIconByID = function(id) return state.itemIcons[id] or id end,
+        GetItemSpell = function(id)
+            if state.itemSpells[id] == false then return nil end
+            return "Item spell " .. id, state.itemSpells[id] or id + 1000
+        end,
+        UseItemByName = function() end,
+        GetItemInfoInstant = function(info)
+            if type(info) == "number" then return info end
+            return state.itemIDsByName[info]
+        end,
+    }
+    env.NUM_BAG_SLOTS = 4
+    env.C_Container = {
+        UseContainerItem = function() end,
+        GetContainerNumSlots = function(bag) return #(state.bags[bag] or {}) end,
+        GetContainerItemID = function(bag, slot) return (state.bags[bag] or {})[slot] end,
     }
     env.GetInventoryItemID = function(_, slot) return state.slots[slot] end
     env.GetInventoryItemTexture = env.GetInventoryItemID
     env.GetInventoryItemCooldown = function(_, slot) return itemCooldown(state.slots[slot]) end
     env.UseInventoryItem = function() end
-    env.hooksecurefunc = function(name, callback) state.hooks[name] = callback end
+    env.hooksecurefunc = function(target, method, callback)
+        if type(target) == "table" then state.hooks[method] = callback
+        else state.hooks[target] = method end
+    end
     env.GetActionInfo = function() return "item", state.actionItem end
     function state:installSettings()
         self.settingsPanel = frame()
@@ -711,5 +729,124 @@ test("reopening floating options refreshes slider values and labels", function()
     s:options()
     assert(slider:GetValue() == 95 and slider.fontStrings[1]:GetText() == "95.0")
 end)
+
+local function preparePotion(s, itemID, icon)
+    itemID = itemID or 118
+    s.itemSpells[itemID] = 439
+    s.itemIcons[itemID] = icon or 500118
+    s.itemNames[itemID] = "Minor Healing Potion"
+    s.spellNames[439], s.spellIcons[439] = "Healing Potion", 999439
+    s.spells[439], s.items[itemID] = cooldown(10), cooldown(30)
+    s.bags[0] = {itemID}
+    s:event("PLAYER_ENTERING_WORLD")
+    return itemID
+end
+
+test("potion effect uses item texture and item cooldown instead of placeholder", function()
+    local s = setup()
+    preparePotion(s)
+    s:cast(439); s:tick(12)
+    assert(#s.pulses == 0, "used the potion effect's shorter timer")
+    s:tick(20); s:command("last")
+    assert(#s.pulses == 1 and s.pulses[1] == 500118, "displayed the spell placeholder")
+    assert(#s.messages == 2 and s.messages[2]:find("Minor Healing Potion | item ID 118", 1, true))
+end)
+
+test("action item use and cast event produce one potion flash", function()
+    local s = setup()
+    preparePotion(s); s.actionItem = 118
+    s.hooks.UseAction(1); s:cast(439); s:tick(32)
+    assert(#s.pulses == 1 and s.pulses[1] == 500118)
+end)
+
+test("post-use hook replaces a spell watch created before inventory indexing", function()
+    local s = setup()
+    s.itemSpells[118], s.itemIcons[118] = 439, 500118
+    s.items[118], s.spells[439], s.actionItem = cooldown(30), cooldown(10), 118
+    s:cast(439); s:tick(0.7) -- Spell is already enrolled when the hook arrives.
+    s.hooks.UseAction(1); s:tick(32)
+    assert(#s.pulses == 1 and s.pulses[1] == 500118)
+end)
+
+test("last potion in a stack resolves after the bag update removes it", function()
+    local s = setup()
+    preparePotion(s)
+    s.bags[0] = {}
+    s:event("BAG_UPDATE_DELAYED")
+    s:cast(439); s:tick(32)
+    assert(#s.pulses == 1 and s.pulses[1] == 500118)
+end)
+
+test("bag use hook retains the last consumed slot identity", function()
+    local s = setup()
+    preparePotion(s)
+    s.bags[0] = {}
+    s.hooks.UseContainerItem(0, 1); s:cast(439); s:tick(32)
+    assert(#s.pulses == 1 and s.pulses[1] == 500118)
+end)
+
+test("recently used potion variant wins over another carried item with same effect", function()
+    local s = setup()
+    preparePotion(s)
+    s.itemSpells[119], s.itemIcons[119] = 439, 500119
+    s.items[119], s.bags[0], s.actionItem = cooldown(30), {118,119}, 118
+    s:event("BAG_UPDATE_DELAYED")
+    s.hooks.UseAction(1)
+    s.bags[0] = {119}; s:event("BAG_UPDATE_DELAYED")
+    s:cast(439); s:tick(32)
+    assert(#s.pulses == 1 and s.pulses[1] == 500118)
+end)
+
+test("carried item sharing a learned class ability does not steal the cast", function()
+    local s = setup()
+    preparePotion(s)
+    s.knownSpells[439] = true
+    s:cast(439); s:tick(12)
+    assert(#s.pulses == 1 and s.pulses[1] == 999439)
+end)
+
+test("explicit use still routes an item even when its effect is a learned spell", function()
+    local s = setup()
+    preparePotion(s)
+    s.knownSpells[439], s.actionItem = true, 118
+    s.hooks.UseAction(1); s:cast(439); s:tick(32)
+    assert(#s.pulses == 1 and s.pulses[1] == 500118)
+end)
+
+test("named item use routes consumables through item tracking", function()
+    local s = setup()
+    s.itemSpells[118], s.itemIcons[118], s.itemIDsByName["Minor Healing Potion"] = 439, 500118, 118
+    s.items[118], s.spells[439] = cooldown(30), cooldown(10)
+    s.hooks.UseItemByName("Minor Healing Potion"); s:cast(439); s:tick(32)
+    assert(#s.pulses == 1 and s.pulses[1] == 500118)
+end)
+
+test("potion metadata arriving later refreshes the effect mapping", function()
+    local s = setup()
+    s.bags[0], s.itemSpells[118], s.itemIcons[118] = {118}, false, 500118
+    s.items[118], s.spells[439] = cooldown(30), cooldown(10)
+    s:event("PLAYER_ENTERING_WORLD")
+    s.itemSpells[118] = 439
+    s:event("GET_ITEM_INFO_RECEIVED", 118, true)
+    s:cast(439); s:tick(32)
+    assert(#s.pulses == 1 and s.pulses[1] == 500118)
+end)
+
+test("expired removed-item mappings cannot redirect unrelated later casts", function()
+    local s = setup()
+    preparePotion(s)
+    s.bags[0] = {}; s:event("BAG_UPDATE_DELAYED"); s:tick(6)
+    s.spells[439] = {startTime=s.now, duration=10, isActive=true, isEnabled=true}
+    s:cast(439); s:tick(12)
+    assert(#s.pulses == 1 and s.pulses[1] == 999439)
+end)
+
+test("potion blacklist applies to the real item ID", function()
+    local s = setup(nil, {ignoredSpells="118", invertIgnored=false})
+    preparePotion(s)
+    s:cast(439); s:tick(32)
+    assert(#s.pulses == 0)
+end)
+
 
 print(string.format("%d cooldown tests passed", passed))
