@@ -15,6 +15,12 @@ Checked November 5, 2026. Target: **1.60.1 / interface 16001**. The launch UI-so
 
 Other fixes: initialize only on this addon's own `ADDON_LOADED`, and expire short cooldown watch entries after three seconds so they cannot poll forever. Existing saved-variable identifiers and customization controls remain.
 
+## Version 1.1: Empty whitelist and opaque filter window
+
+An empty whitelist now allows all cooldowns while preserving the saved Whitelist selection. Empty or whitespace-only comma-separated entries are ignored. The same behavior applies to spells and items on load, when switching modes, and when removing or clearing entries. Adding an entry activates whitelist filtering again.
+
+The filter editor uses a solid, fully opaque dark background. The mocked Lua 5.1 regression suite covers these transitions and the background configuration; final rendering still needs an in-game check.
+
 ## Version 1.0.8: Visual filter editor
 
 Replace the main options text field with **Edit filters...**; `/dcp filters` opens the same standalone editor. `FilterEditor.lua` is a separate module loaded by the TOC through WoW's shared addon namespace. Existing floating `/dcp` controls and the Settings launcher are retained.

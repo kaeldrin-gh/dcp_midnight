@@ -31,7 +31,7 @@ Open `/dcp` and press **Edit filters...**, or use **`/dcp filters`** directly.
 
 - Drag a spell from the spellbook or action bars, or an item from your bags, onto the drop area. IDs are stored automatically; entries show their icons and names.
 - Use **Remove** to delete an entry. Hover a row for the spell/item tooltip. Scroll or use Previous/Next for longer lists.
-- Choose **Blacklist** to hide listed abilities/items, or **Whitelist** to show only listed entries. This choice and the entries are saved per character and shared with the main options window.
+- Choose **Blacklist** to hide listed abilities/items, or **Whitelist** to show only listed entries. An empty list means no filtering, even with Whitelist selected. This choice and the entries are saved per character and shared with the main options window.
 - Switch to **Recent flashes** to add an icon that actually appeared, including potion effects and pet spells. Repeated flashes are deduplicated. History covers the current session's ten most recent displayed flashes and clears on `/reload`.
 - **Advanced text** retains manual comma-separated names and IDs; press **Apply** or Enter to save. `spell:100` and `item:118` target a specific type. Existing names and plain numeric IDs are preserved; legacy numeric IDs continue matching either type.
 

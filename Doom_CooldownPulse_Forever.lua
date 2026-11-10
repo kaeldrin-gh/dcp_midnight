@@ -116,7 +116,6 @@ local function RefreshLocals()
     iconSize = DCP_Saved.iconSize
     holdTime = DCP_Saved.holdTime
     showSpellName = DCP_Saved.showSpellName
-    invertIgnored = DCP_SavedPerCharacter.invertIgnored
     remainingCooldownWhenNotified = DCP_Saved.remainingCooldownWhenNotified
     showPetCooldowns = DCP_SavedPerCharacter.showPetCooldowns
 
@@ -147,8 +146,11 @@ local function RefreshLocals()
 
     ignoredSpells = { }
     for _,v in ipairs({strsplit(",",DCP_SavedPerCharacter.ignoredSpells)}) do
-        ignoredSpells[strtrim(v)] = true
+        local entry = strtrim(v)
+        if entry ~= "" then ignoredSpells[entry] = true end
     end
+    -- Keep the saved mode selected, but an empty list never filters pulses.
+    invertIgnored = DCP_SavedPerCharacter.invertIgnored and next(ignoredSpells) ~= nil
     if addon.FilterEditor then addon.FilterEditor:Refresh() end
 end
 

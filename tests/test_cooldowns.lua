@@ -55,6 +55,8 @@ local function setup(settings, characterSettings, nativeSettings)
     function methods:GetWidth() return 1920 end
     function methods:GetHeight() return 1080 end
     function methods:GetEffectiveScale() return 1 end
+    function methods:SetBackdrop(value) self.backdrop = value end
+    function methods:SetBackdropColor(...) self.backdropColor = {...} end
     function methods:SetAlpha(value) self.alpha = value end
     function methods:IsMouseEnabled() return self.mouse end
     function methods:EnableMouse(value) self.mouse = value end
@@ -1114,6 +1116,72 @@ test("missing spell data is requested once and its loaded name refreshes",functi
     s.missingSpells[999]=false;s.spellNames[999]="Loaded spell"
     editor.frame.scripts.OnEvent(editor.frame,"SPELL_DATA_LOAD_RESULT",999,true)
     assert(editor.rows[1].entry.name=="Loaded spell")
+end)
+
+
+test("empty and whitespace-only saved whitelists allow player cooldowns", function()
+    for _, text in ipairs({"", "  , ,\t, "}) do
+        local s = setup(nil, {ignoredSpells=text, invertIgnored=true})
+        s.spells[6], s.spells[7] = cooldown(5), cooldown(5)
+        s:cast(6); s:cast(7); s:tick(7)
+        assert(#s.pulses == 2, "empty whitelist suppressed cooldowns")
+        assert(s.env.DCP_SavedPerCharacter.invertIgnored)
+    end
+end)
+
+test("selecting whitelist with no entries leaves filtering inactive", function()
+    local s = setup()
+    s:command("filters")
+    s.private.FilterEditor.whitelist.scripts.OnClick()
+    s.spells[6] = cooldown(5)
+    s:cast(6); s:tick(7)
+    assert(#s.pulses == 1 and s.private.FilterEditor.whitelist:GetChecked())
+end)
+
+test("removing the last whitelist entry allows unlisted spells", function()
+    local s = setup(nil, {ignoredSpells="spell:6", invertIgnored=true})
+    s:command("filters")
+    s.private.FilterEditor:Remove("spell:6")
+    s.spells[7] = cooldown(5)
+    s:cast(7); s:tick(7)
+    assert(#s.pulses == 1 and s.pulses[1] == 7)
+    assert(s.private.FilterEditor.whitelist:GetChecked())
+end)
+
+test("clearing advanced whitelist text preserves an already tracked pulse", function()
+    local s = setup(nil, {ignoredSpells="spell:6", invertIgnored=true})
+    s.spells[6] = cooldown(5)
+    s:cast(6); s:tick(1)
+    s.private.FilterEditor:ApplyText("  , ")
+    s:tick(6)
+    assert(#s.pulses == 1 and s.pulses[1] == 6)
+    assert(s.private.Filters.GetText() == "" and s.private.Filters.GetMode())
+end)
+
+test("empty whitelist allows item cooldowns on load and after clearing", function()
+    for _, text in ipairs({"", "spell:6"}) do
+        local s = setup(nil, {ignoredSpells=text, invertIgnored=true})
+        if text ~= "" then s.private.FilterEditor:Remove(text) end
+        preparePotion(s)
+        s:cast(439); s:tick(32)
+        assert(#s.pulses == 1 and s.pulses[1] == 500118)
+    end
+end)
+
+test("adding entries to an empty whitelist activates filtering again", function()
+    local s = setup(nil, {ignoredSpells="", invertIgnored=true})
+    s.private.FilterEditor:Add("spell", 6)
+    s.spells[6], s.spells[7] = cooldown(5), cooldown(5)
+    s:cast(6); s:cast(7); s:tick(7)
+    assert(#s.pulses == 1 and s.pulses[1] == 6)
+end)
+
+test("filter window uses an opaque solid background", function()
+    local s = setup()
+    s:command("filters")
+    local frame = s.private.FilterEditor.frame
+    assert(frame.backdrop.bgFile == "Interface\\Buttons\\WHITE8X8")
+    assert(frame.backdropColor[4] == 1)
 end)
 
 print(string.format("%d cooldown tests passed", passed))
