@@ -19,11 +19,25 @@ Disable other Doom CooldownPulse editions in this client: they share slash comma
 
 ## Options
 
-Use `/dcp`, `/cooldownpulse`, or `/doomcooldownpulse` for the floating options window. **Settings → AddOns → Doom CooldownPulse** contains one large **Open /dcp options** button that closes Settings and opens that same window. All controls stay in the floating window. Customize icon size and position (**Unlock**), fade times, opacity, hold time, animation scaling, early notification, spell names, ignored spells, and the pet icon overlay. Ignore lists accept comma-separated names or IDs; whitelist mode shows only listed abilities. **Test** previews the animation; **Defaults** restores settings.
+Use `/dcp`, `/cooldownpulse`, or `/doomcooldownpulse` for the floating options window. **Settings → AddOns → Doom CooldownPulse** contains one large **Open /dcp options** button that closes Settings and opens that same window. All controls stay in the floating window. Customize icon size and position (**Unlock**), fade times, opacity, hold time, animation scaling, early notification, spell names, ignored spells, and the pet icon overlay. Use **Edit filters...** for drag/drop and recent flashes; **Advanced text** retains comma-separated entry. Whitelist mode shows only listed abilities. **Test** previews the animation; **Defaults** restores settings.
 
 **Show pet cooldown pulses** is enabled by default. Uncheck it in `/dcp` to hide pet abilities for this character. The change takes effect immediately, including queued and active pet flashes; player and item flashes continue. Checking it again tracks subsequent pet casts. **Defaults** restores it to enabled.
 
 `DCP_Saved` and `DCP_SavedPerCharacter` retain their names and structure. WoW stores them under the addon's folder name, so older settings are not automatically imported. To migrate manually, exit WoW, back up the old SavedVariables files, and copy their contents to the corresponding `Doom_CooldownPulse_Forever.lua` SavedVariables files in the Forever account and character folders. Do not edit the addon source file to transfer settings.
+
+## Visual filters
+
+Open `/dcp` and press **Edit filters...**, or use **`/dcp filters`** directly.
+
+- Drag a spell from the spellbook or action bars, or an item from your bags, onto the drop area. IDs are stored automatically; entries show their icons and names.
+- Use **Remove** to delete an entry. Hover a row for the spell/item tooltip. Scroll or use Previous/Next for longer lists.
+- Choose **Blacklist** to hide listed abilities/items, or **Whitelist** to show only listed entries. This choice and the entries are saved per character and shared with the main options window.
+- Switch to **Recent flashes** to add an icon that actually appeared, including potion effects and pet spells. Repeated flashes are deduplicated. History covers the current session's ten most recent displayed flashes and clears on `/reload`.
+- **Advanced text** retains manual comma-separated names and IDs; press **Apply** or Enter to save. `spell:100` and `item:118` target a specific type. Existing names and plain numeric IDs are preserved; legacy numeric IDs continue matching either type.
+
+Drag/drop and remove changes apply immediately, including to an already tracked or queued pulse. Duplicate entries are avoided. Pet abilities can be dragged; pet commands such as Attack and macros are not filter entries. Unsupported or protected cursor data does not change the list. The editor is created only when opened, reuses seven visible rows, and adds no external libraries or image assets.
+
+The install ZIP now includes **`FilterEditor.lua`**, which the TOC loads after the main Lua file. Install all files from the ZIP.
 
 ## Compatibility
 

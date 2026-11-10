@@ -15,6 +15,20 @@ Checked November 5, 2026. Target: **1.60.1 / interface 16001**. The launch UI-so
 
 Other fixes: initialize only on this addon's own `ADDON_LOADED`, and expire short cooldown watch entries after three seconds so they cannot poll forever. Existing saved-variable identifiers and customization controls remain.
 
+## Version 1.0.8: Visual filter editor
+
+Replace the main options text field with **Edit filters...**; `/dcp filters` opens the same standalone editor. `FilterEditor.lua` is a separate module loaded by the TOC through WoW's shared addon namespace. Existing floating `/dcp` controls and the Settings launcher are retained.
+
+The editor offers a spell/item drop area, icon/name rows with tooltips and Remove buttons, blacklist/whitelist mode, a Recent flashes view with per-row Add buttons, and expandable Advanced text with an explicit Apply action. Reuse seven row widgets with wheel/paging navigation. Controls are created only when opened; there is no editor polling loop, external library, or new image asset. Missing metadata is requested once per ID and visible rows refresh after data-load events.
+
+Follow Forever's [click-binding cursor implementation](https://github.com/Gethe/wow-ui-source/blob/forever/Interface/AddOns/Blizzard_ClickBindingUI/Blizzard_ClickBindingUI.lua): a spell's cursor ID is the fourth return of `GetCursorInfo`, rather than the second spellbook-slot return. Item cursors supply the item ID second. Resolve pet action payloads against the Pet spellbook; reject commands, unsupported types, invalid IDs, and protected values. Clear the cursor only after a valid addition or already-included match.
+
+Retain the existing per-character comma-separated storage. New rows use `spell:ID` / `item:ID` to avoid numeric collisions; old names, unresolved entries, and plain numeric aliases remain supported. Opening the editor alone never rewrites saved text. Add/remove/apply operations deduplicate and trim entries. Recent flashes use actual displayed pulse IDs/types, including consumable item IDs and pet spell IDs. Filter changes are rechecked at animation queue time and remove newly filtered queued/active animations immediately. The Test preview remains available regardless of filters.
+
+All **85 mocked Lua 5.1 checks** pass, including the previous 63 regressions plus cursor formats, duplicate handling, item/spell ID isolation, legacy entry preservation, active cooldown filtering, mode synchronization, recent potion/pet imports, paging/removal, advanced entry, reload/defaults, tooltips, pet commands, secret/invalid values, completed-drop clicks, and asynchronous metadata. An approximate layout generated from the real widget calls was inspected for spacing; this does not validate WoW's actual rendering.
+
+In-game checklist: open via both entry points, drag spells from the spellbook/action bars and items from bags, try a pet ability, hover tooltips, remove entries, check both modes, add a potion from Recent flashes, page/scroll a longer list, apply Advanced text, then `/reload` and confirm persistence. Verify Escape/Close and the main options controls. Unsupported drags should preserve the filter list and cursor; no Lua errors should occur. All four runtime files in the release ZIP are required, including the new editor module.
+
 ## Version 1.0.7: Consumable effect icons and duplicate tracking
 
 The owner's pulse history identified the insignia-like flash as **Healing Potion, spell ID 439**, not an unidentified developer check. The cast handler recognized trinket effects but could still enroll bag-item effects as ordinary spells, allowing the effect's placeholder texture and shorter spell timer to appear instead of the actual potion icon/cooldown.

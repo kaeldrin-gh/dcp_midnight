@@ -1,4 +1,5 @@
-local addonName = ...
+local addonName, addon = ...
+addon = addon or {}
 local fadeInTime, fadeOutTime, maxAlpha, animScale, iconSize, holdTime, showSpellName, ignoredSpells, invertIgnored, remainingCooldownWhenNotified
 local spellCooldowns, itemCooldowns, animating, spellWatching, itemWatching = { }, { }, { }, { }, { }
 local GetTime = GetTime
@@ -148,6 +149,7 @@ local function RefreshLocals()
     for _,v in ipairs({strsplit(",",DCP_SavedPerCharacter.ignoredSpells)}) do
         ignoredSpells[strtrim(v)] = true
     end
+    if addon.FilterEditor then addon.FilterEditor:Refresh() end
 end
 
 local function MergeTable(destination, source)
@@ -209,9 +211,11 @@ local function RecordPulse(details)
         name = name,
         id = itemID or spellID,
         kind = itemID and "item" or (details[2] and "pet spell" or "spell"),
-        shownAt = GetTime()
+        shownAt = GetTime(),
+        texture = details[1]
     })
     if #recentPulses > MAX_RECENT_PULSES then tremove(recentPulses, 1) end
+    if addon.FilterEditor and addon.FilterEditor.view == "recent" then addon.FilterEditor:Refresh() end
 end
 
 local function ShowRecentPulses()
@@ -236,7 +240,22 @@ local function IsAnimatingCooldownByName(name)
     return false
 end
 
+-- Apply current filters again at display queue time, including cooldowns that
+-- were already being tracked when the visual editor changed the filter list.
+local function IsPulseFiltered(name, spellID, itemID)
+    if not spellID and not itemID then return false end
+    local match = not IsSecret(name) and name and ignoredSpells[name]
+    if not IsSecret(spellID) and type(spellID) == "number" then
+        match = match or ignoredSpells[tostring(spellID)] or ignoredSpells["spell:"..spellID]
+    end
+    if not IsSecret(itemID) and type(itemID) == "number" then
+        match = match or ignoredSpells[tostring(itemID)] or ignoredSpells["item:"..itemID]
+    end
+    return (match and true or false) ~= invertIgnored
+end
+
 local function QueueAnimation(texture, isPet, name, spellID, itemID)
+    if IsPulseFiltered(name, spellID, itemID) then return end
     if isPet and not showPetCooldowns then return end
     if texture and not IsAnimatingCooldownByName(name) then
         tinsert(animating, {texture, isPet, name, spellID, itemID})
@@ -1082,6 +1101,7 @@ SlashCmdList["DOOMCOOLDOWNPULSE"] = function(message)
         print("DCP: Recent pulse history cleared.")
         return
     end
+    if command == "filters" then addon.FilterEditor:Open() return end
     DCP:OpenFloatingOptions()
 end
 SLASH_DOOMCOOLDOWNPULSE1 = "/dcp"
@@ -1129,7 +1149,6 @@ function DCP:CreateOptionsFrame()
             DCP_OptionsFramePetColorBox:GetNormalTexture():SetVertexColor(unpack(DCP_Saved.petOverlay))
             DCP_OptionsFrameIgnoreTypeButtonWhitelist:SetChecked(false)
             DCP_OptionsFrameIgnoreTypeButtonBlacklist:SetChecked(true)
-            DCP_OptionsFrameIgnoreBox:SetText("")
             DCP_OptionsFramePetPulsesCheckButton:SetChecked(DCP_SavedPerCharacter.showPetCooldowns)
             RefreshLocals()
             DCP:ClearAllPoints()
@@ -1261,8 +1280,7 @@ function DCP:CreateOptionsFrame()
     ignoretypebuttonblacklist:SetChecked(not DCP_SavedPerCharacter.invertIgnored)
     ignoretypebuttonblacklist:SetScript("OnClick", function()
         DCP_OptionsFrameIgnoreTypeButtonWhitelist:SetChecked(false)
-        DCP_SavedPerCharacter.invertIgnored = false
-        RefreshLocals()
+        addon.Filters.SetMode(false)
     end)
 
     local ignoretypetextblacklist = optionsframe:CreateFontString(nil,"ARTWORK","GameFontNormalSmall")
@@ -1274,27 +1292,18 @@ function DCP:CreateOptionsFrame()
     ignoretypebuttonwhitelist:SetChecked(DCP_SavedPerCharacter.invertIgnored)
     ignoretypebuttonwhitelist:SetScript("OnClick", function()
         DCP_OptionsFrameIgnoreTypeButtonBlacklist:SetChecked(false)
-        DCP_SavedPerCharacter.invertIgnored = true
-        RefreshLocals()
+        addon.Filters.SetMode(true)
     end)
 
     local ignoretypetextwhitelist = optionsframe:CreateFontString(nil,"ARTWORK","GameFontNormalSmall")
     ignoretypetextwhitelist:SetPoint("LEFT",ignoretypebuttonwhitelist,"RIGHT",4,0)
     ignoretypetextwhitelist:SetText("Whitelist")
 
-    local ignorebox = CreateFrame("EditBox","DCP_OptionsFrameIgnoreBox",optionsframe,"InputBoxTemplate")
-    ignorebox:SetAutoFocus(false)
-    ignorebox:SetPoint("TOPLEFT",ignoretypebuttonblacklist,"BOTTOMLEFT",4,-8)
-    ignorebox:SetWidth(170)
-    ignorebox:SetHeight(32)
-    ignorebox:SetText(DCP_SavedPerCharacter.ignoredSpells)
-    ignorebox:SetScript("OnEnter",function(self) GameTooltip:SetOwner(self, "ANCHOR_CURSOR") GameTooltip:SetText("Note: Separate multiple spells with commas") end)
-    ignorebox:SetScript("OnLeave",function(self) GameTooltip:Hide() end)
-    ignorebox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
-    ignorebox:SetScript("OnEditFocusLost",function(self)
-        DCP_SavedPerCharacter.ignoredSpells = ignorebox:GetText()
-        RefreshLocals()
-    end)
+    local editFilters = CreateFrame("Button", "DCP_OptionsFrameEditFilters", optionsframe, "UIPanelButtonTemplate")
+    editFilters:SetPoint("TOPLEFT",ignoretypebuttonblacklist,"BOTTOMLEFT",4,-8)
+    editFilters:SetSize(170,28)
+    editFilters:SetText("Edit filters...")
+    editFilters:SetScript("OnClick",function() addon.FilterEditor:Open() end)
 
     for i,v in pairs(buttons) do
         local button = CreateFrame("Button", "DCP_OptionsFrameButton"..i, optionsframe, "UIPanelButtonTemplate")
@@ -1313,7 +1322,6 @@ function DCP:CreateOptionsFrame()
         DCP_OptionsFrameSpellNameCheckButton:SetChecked(DCP_Saved.showSpellName == true)
         DCP_OptionsFrameIgnoreTypeButtonBlacklist:SetChecked(not DCP_SavedPerCharacter.invertIgnored)
         DCP_OptionsFrameIgnoreTypeButtonWhitelist:SetChecked(DCP_SavedPerCharacter.invertIgnored)
-        DCP_OptionsFrameIgnoreBox:SetText(DCP_SavedPerCharacter.ignoredSpells)
         DCP_OptionsFramePetColorBox:GetNormalTexture():SetVertexColor(unpack(DCP_Saved.petOverlay))
         syncingOptions = false
     end)
@@ -1358,3 +1366,32 @@ function DCP:PLAYER_LOGIN()
     self:RegisterSettingsCategory()
     self:UnregisterEvent("PLAYER_LOGIN")
 end
+
+
+-- Small editor bridge: saved format and the cooldown engine remain in this file.
+local function ApplyFilters()
+    RefreshLocals()
+    local removedCurrent = animating[1] and IsPulseFiltered(animating[1][3], animating[1][4], animating[1][5])
+    for i = #animating, 1, -1 do
+        if IsPulseFiltered(animating[i][3], animating[i][4], animating[i][5]) then tremove(animating, i) end
+    end
+    if removedCurrent then
+        runtimer = 0
+        if not DCP:IsMouseEnabled() then
+            DCP.TextFrame:SetText(nil) DCPT:SetTexture(nil) DCPT:SetVertexColor(1,1,1) DCP:SetAlpha(0)
+        end
+    end
+    if DCP_OptionsFrame then
+        DCP_OptionsFrameIgnoreTypeButtonBlacklist:SetChecked(not DCP_SavedPerCharacter.invertIgnored)
+        DCP_OptionsFrameIgnoreTypeButtonWhitelist:SetChecked(DCP_SavedPerCharacter.invertIgnored)
+    end
+end
+
+addon.Filters = {
+    GetText = function() return DCP_SavedPerCharacter.ignoredSpells end,
+    SetText = function(text) DCP_SavedPerCharacter.ignoredSpells = text ApplyFilters() end,
+    GetMode = function() return DCP_SavedPerCharacter.invertIgnored end,
+    SetMode = function(value) DCP_SavedPerCharacter.invertIgnored = value == true ApplyFilters() end,
+    GetRecent = function() return recentPulses end,
+    IsSecret = IsSecret,
+}

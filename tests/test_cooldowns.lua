@@ -2,6 +2,8 @@
 -- lua tests/test_cooldowns.lua [path/to/Doom_CooldownPulse_Forever.lua]
 local addonPath = (arg and arg[1]) or "Doom_CooldownPulse_Forever.lua"
 local addon = assert(loadfile(addonPath))
+local editorPath = addonPath:match("^(.*[/\\])") or ""
+local editor = assert(loadfile(editorPath .. "FilterEditor.lua"))
 local passed = 0
 
 local function setup(settings, characterSettings, nativeSettings)
@@ -35,6 +37,8 @@ local function setup(settings, characterSettings, nativeSettings)
     function methods:SetMovable(value) self.movable = value end
     function methods:SetScrollChild(child) self.scrollChild = child end
     function methods:IsShown() return rawget(self, "shown") == true end
+    function methods:SetShown(shown) if shown then self:Show() else self:Hide() end end
+    function methods:SetEnabled(value) self.enabled=value end
     function methods:Show()
         if self:IsShown() then return end
         self.shown = true
@@ -98,6 +102,17 @@ local function setup(settings, characterSettings, nativeSettings)
     env.ceil = math.ceil
     env.PlaySound = function() end
     env.print = function(message) table.insert(state.messages, message) end
+    state.cursorCleared=0
+    state.missingSpells={}
+    state.spellDataRequests={}
+    env.GetCursorInfo=function() return unpack(state.cursor or {}) end
+    env.ClearCursor=function() state.cursor=nil state.cursorCleared=state.cursorCleared+1 end
+    env.GameTooltip={
+        SetOwner=function() end,SetText=function() end,AddLine=function() end,Show=function() end,Hide=function() end,
+        SetSpellByID=function(_,id) state.tooltipSpell=id end,
+        SetItemByID=function(_,id) state.tooltipItem=id end,
+    }
+    state.bookSlots={}
     env.GetTime = function() return state.now end
     env.STANDARD_TEXT_FONT = "font"
     env.tinsert, env.tremove, env.format = table.insert, table.remove, string.format
@@ -118,7 +133,15 @@ local function setup(settings, characterSettings, nativeSettings)
         return {startTime = 0, duration = 0, isActive = false, isEnabled = true}
     end
     env.C_Spell = {
-        GetSpellInfo = function(id) return {name = state.spellNames[id] or "Spell " .. id, iconID = state.spellIcons[id] or id} end,
+        RequestLoadSpellData = function(id) state.spellDataRequests[id]=(state.spellDataRequests[id] or 0)+1 end,
+        GetSpellInfo = function(id)
+            if state.missingSpells[id] then return nil end
+            if type(id)=="string" then
+                for number,name in pairs(state.spellNames) do if name==id then return {name=name,iconID=state.spellIcons[number] or number,spellID=number} end end
+                return nil
+            end
+            return {name=state.spellNames[id] or "Spell "..id,iconID=state.spellIcons[id] or id,spellID=id}
+        end,
         GetSpellCooldown = function(id)
             local data = state.spells[id]
             if type(data) == "function" then return data() end
@@ -129,6 +152,7 @@ local function setup(settings, characterSettings, nativeSettings)
         IsSpellKnown = function(id, bank) assert(bank == 0) return state.knownSpells[id] == true end,
         HasPetSpells = function() return state.petID and 1 or 0 end,
         GetSpellBookItemInfo = function(slot, bank)
+            if bank==0 then return state.bookSlots[slot] end
             assert(slot == 1 and bank == 1)
             return {spellID = state.petID}
         end,
@@ -202,7 +226,10 @@ local function setup(settings, characterSettings, nativeSettings)
         }
     end
     if nativeSettings then state:installSettings() end
-    setfenv(addon, env)("Doom_CooldownPulse_Forever")
+    local private = {}
+    setfenv(addon, env)("Doom_CooldownPulse_Forever", private)
+    setfenv(editor, env)("Doom_CooldownPulse_Forever", private)
+    state.private = private
     state.dcp = state.frames[1]
     function state:event(event, ...)
         assert(self.dcp.events[event], "event not registered: " .. event)
@@ -848,5 +875,245 @@ test("potion blacklist applies to the real item ID", function()
     assert(#s.pulses == 0)
 end)
 
+
+test("visual editor is lazy and preserves legacy text on opening", function()
+    local original="Charge, 118, unknown old spell,spell:6343"
+    local s=setup(nil,{ignoredSpells=original,invertIgnored=false})
+    local editor=s.private.FilterEditor
+    assert(editor.frame==nil)
+    s:options()
+    assert(editor.frame==nil and s.env.DCP_OptionsFrameEditFilters)
+    s.env.DCP_OptionsFrameEditFilters.scripts.OnClick()
+    assert(editor.frame:IsShown() and #editor.rows==7)
+    assert(s.env.DCP_SavedPerCharacter.ignoredSpells==original)
+    assert(#editor:Entries()==4)
+end)
+
+test("spell drop uses the fourth cursor return, not the spellbook slot", function()
+    local s=setup()
+    local editor=s.private.FilterEditor
+    s.cursor={"spell",7,0,6343}
+    assert(editor:Drop())
+    assert(s.env.DCP_SavedPerCharacter.ignoredSpells=="spell:6343" and s.cursorCleared==1)
+end)
+
+test("bag item drop keeps its ID separate from the effect spell", function()
+    local s=setup()
+    s.cursor={"item",118,"item:118"}
+    assert(s.private.FilterEditor:Drop())
+    assert(s.env.DCP_SavedPerCharacter.ignoredSpells=="item:118")
+end)
+
+test("spellbook fallback resolves a missing fourth cursor return", function()
+    local s=setup()
+    s.bookSlots[3]={spellID=7384,name="Overpower"}
+    s.cursor={"spell",3,0}
+    assert(s.private.FilterEditor:Drop())
+    assert(s.env.DCP_SavedPerCharacter.ignoredSpells=="spell:7384")
+end)
+
+test("unsupported and restricted cursor payloads do not change filters or cursor", function()
+    local s=setup()
+    local editor=s.private.FilterEditor
+    for _, cursor in ipairs({{"macro",1},{"spell",4,0,secret},{secret,118},{"item",secret},{"item",0}}) do
+        s.cursor=cursor
+        assert(not editor:Drop())
+    end
+    assert(s.cursorCleared==0 and s.env.DCP_SavedPerCharacter.ignoredSpells=="")
+end)
+
+test("adding duplicates preserves spell-item distinctions and legacy coverage", function()
+    local s=setup()
+    local editor=s.private.FilterEditor
+    assert(editor:Add("spell",118) and editor:Add("item",118) and editor:Add("spell",118))
+    assert(#editor:Entries()==2)
+    editor:ApplyText("118,Charge")
+    s.spellNames[100]="Charge"
+    editor:Add("item",118); editor:Add("spell",118); editor:Add("spell",100)
+    assert(s.env.DCP_SavedPerCharacter.ignoredSpells=="118,Charge")
+end)
+
+test("typed spell filters do not suppress items with the same numeric ID", function()
+    local s=setup()
+    s.private.FilterEditor:Add("spell",20)
+    s.spells[20],s.items[20],s.actionItem=cooldown(5),cooldown(6),20
+    s.itemIcons[20]=500020
+    s:cast(20);s.hooks.UseAction(1);s:tick(8)
+    assert(#s.pulses==1 and s.pulses[1]==500020)
+end)
+
+test("typed item filters do not suppress spells with the same numeric ID", function()
+    local s=setup()
+    s.private.FilterEditor:Add("item",20)
+    s.spells[20],s.items[20],s.actionItem=cooldown(5),cooldown(6),20
+    s:cast(20);s.hooks.UseAction(1);s:tick(8)
+    assert(#s.pulses==1 and s.pulses[1]==20)
+end)
+
+test("removal preserves unresolved legacy entries and per-character mode", function()
+    local s=setup(nil,{ignoredSpells="old unknown name,spell:100,item:118",invertIgnored=true})
+    s.private.FilterEditor:Remove("spell:100")
+    assert(s.env.DCP_SavedPerCharacter.ignoredSpells=="old unknown name,item:118")
+    assert(s.env.DCP_SavedPerCharacter.invertIgnored)
+end)
+
+test("adding a filter suppresses an already tracked cooldown immediately", function()
+    local s=setup()
+    s.spells[100]=cooldown(5)
+    s:cast(100);s:tick(1)
+    s.private.FilterEditor:Add("spell",100);s:tick(7)
+    assert(#s.pulses==0)
+end)
+
+test("filtering an active animation clears that pulse", function()
+    local s=setup()
+    s.spells[100]=cooldown(5)
+    s:cast(100);s:tick(5.2)
+    assert(s.icon:GetTexture()==100)
+    s.private.FilterEditor:Add("spell",100)
+    assert(s.icon:GetTexture()==nil and s.dcp.alpha==0)
+end)
+
+test("editor and main options share blacklist and whitelist state", function()
+    local s=setup()
+    s:command("filters")
+    local editor=s.private.FilterEditor
+    editor:Add("spell",100)
+    editor.whitelist.scripts.OnClick()
+    s:options()
+    assert(s.env.DCP_SavedPerCharacter.invertIgnored and s.env.DCP_OptionsFrameIgnoreTypeButtonWhitelist:GetChecked())
+    s.env.DCP_OptionsFrameIgnoreTypeButtonBlacklist.scripts.OnClick()
+    assert(not s.env.DCP_SavedPerCharacter.invertIgnored and editor.blacklist:GetChecked())
+    assert(not editor.whitelist:GetChecked())
+end)
+
+test("recent flashes deduplicate and add real potion item IDs", function()
+    local s=setup()
+    preparePotion(s)
+    s:cast(439);s:tick(32)
+    s.spells[100]={startTime=s.now,duration=3,isActive=true,isEnabled=true}
+    s:cast(100);s:tick(5)
+    s.spells[100]={startTime=s.now,duration=3,isActive=true,isEnabled=true}
+    s:cast(100);s:tick(5)
+    s:command("filters")
+    local editor=s.private.FilterEditor
+    editor.recentTab.scripts.OnClick()
+    assert(#editor:RecentEntries()==2)
+    assert(editor.rows[1].entry.token=="spell:100" and editor.rows[2].entry.token=="item:118")
+    assert(editor.rows[2].icon:GetTexture()==500118)
+    editor.rows[2].action.scripts.OnClick()
+    assert(s.env.DCP_SavedPerCharacter.ignoredSpells=="item:118")
+    assert(editor.rows[2].action:GetText()=="Added" and not editor.rows[2].action.enabled)
+end)
+
+test("pet recent flashes add spell IDs rather than item IDs", function()
+    local s=setup()
+    s.petID,s.petCooldown=10,cooldown(5)
+    s:cast(10,"pet");s:tick(7)
+    local editor=s.private.FilterEditor
+    local entry=editor:RecentEntries()[1]
+    assert(entry.token=="spell:10")
+    editor:Add(entry.kind,entry.id)
+    assert(s.env.DCP_SavedPerCharacter.ignoredSpells=="spell:10")
+end)
+
+test("row pooling and paging keep large filter lists usable", function()
+    local s=setup()
+    local editor=s.private.FilterEditor
+    local entries={}
+    for i=1,20 do entries[i]="spell:"..i end
+    editor:ApplyText(table.concat(entries,","));editor:Open()
+    assert(#editor.rows==7 and editor.rows[1].entry.token=="spell:1")
+    editor.next.scripts.OnClick()
+    assert(editor.rows[1].entry.token=="spell:8")
+    editor.next.scripts.OnClick()
+    assert(editor.rows[7].entry.token=="spell:20" and not editor.next.enabled)
+    editor.rows[1].action.scripts.OnClick()
+    assert(#editor:Entries()==19)
+    editor.previous.scripts.OnClick()
+    assert(editor.offset>=0)
+end)
+
+test("advanced text round-trips names and typed IDs without changing mode", function()
+    local s=setup()
+    s:command("filters")
+    local editor=s.private.FilterEditor
+    editor.advancedButton.scripts.OnClick()
+    assert(editor.raw:IsShown())
+    editor.raw:SetText("Charge, SPELL:100, item:118, Charge, unknown name")
+    editor.apply.scripts.OnClick()
+    assert(s.env.DCP_SavedPerCharacter.ignoredSpells=="Charge,spell:100,item:118,unknown name")
+    assert(not s.env.DCP_SavedPerCharacter.invertIgnored)
+end)
+
+test("filter changes survive reload and Defaults refreshes an open editor", function()
+    local s=setup()
+    s:command("filters")
+    s.private.FilterEditor:Add("spell",100)
+    s.private.Filters.SetMode(true)
+    local reloaded=setup(s.env.DCP_Saved,s.env.DCP_SavedPerCharacter)
+    assert(reloaded.private.FilterEditor:Contains("spell",100) and reloaded.private.Filters.GetMode())
+    s:options()
+    local button=s.env.DCP_OptionsFrameButton4
+    button.scripts.OnClick(button)
+    assert(#s.private.FilterEditor:Entries()==0 and s.private.FilterEditor.blacklist:GetChecked())
+end)
+
+test("row tooltips show resolved spell and item details", function()
+    local s=setup()
+    s:command("filters")
+    local editor=s.private.FilterEditor
+    editor:Add("spell",100);editor:Add("item",118)
+    editor.rows[1].scripts.OnEnter()
+    assert(s.tooltipSpell==100)
+    editor.rows[2].scripts.OnEnter()
+    assert(s.tooltipItem==118)
+end)
+
+
+test("editor resolves pet abilities and rejects pet commands",function()
+    local s=setup()
+    s.petID=10
+    s.cursor={"petaction",10}
+    assert(s.private.FilterEditor:Drop())
+    assert(s.env.DCP_SavedPerCharacter.ignoredSpells=="spell:10")
+    s.cursor={"petaction",1}
+    assert(not s.private.FilterEditor:Drop() and s.cursorCleared==1)
+end)
+
+test("editor rejects oversized IDs and preserves protected cursor values",function()
+    local s=setup()
+    local editor=s.private.FilterEditor
+    assert(not editor:Add("spell",1e30))
+    s.bookSlots[4]={spellID=100}
+    s.cursor={"spell",4,0,secret}
+    assert(not editor:Drop() and s.cursorCleared==0)
+    editor:ApplyText("spell:99999999999999999999")
+    editor:Open()
+    assert(editor.rows[1].entry.detail=="Unresolved entry")
+end)
+
+test("click after a completed drop does not overwrite the success message",function()
+    local s=setup()
+    local editor=s.private.FilterEditor
+    editor:Open()
+    s.cursor={"spell",4,0,100}
+    editor.drop.scripts.OnReceiveDrag()
+    local message=editor.lastStatus
+    editor.drop.scripts.OnClick()
+    assert(editor.lastStatus==message and s.cursorCleared==1)
+end)
+
+test("missing spell data is requested once and its loaded name refreshes",function()
+    local s=setup()
+    local editor=s.private.FilterEditor
+    s.missingSpells[999]=true
+    editor:Add("spell",999);editor:Open();editor:Refresh()
+    assert(s.spellDataRequests[999]==1)
+    assert(editor.rows[1].entry.name=="spell 999")
+    s.missingSpells[999]=false;s.spellNames[999]="Loaded spell"
+    editor.frame.scripts.OnEvent(editor.frame,"SPELL_DATA_LOAD_RESULT",999,true)
+    assert(editor.rows[1].entry.name=="Loaded spell")
+end)
 
 print(string.format("%d cooldown tests passed", passed))

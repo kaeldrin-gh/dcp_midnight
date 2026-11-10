@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: Doom CooldownPulse
-## Version: 1.0.7-forever
+## Version: 1.0.8-forever
 ## Notes: Flash an ability's icon in the middle of the screen when it comes off cooldown.
 ## Author: Kaeldrin[EU]
 ## SavedVariables: DCP_Saved
@@ -8,3 +8,4 @@
 ## IconTexture: Interface\AddOns\Doom_CooldownPulse_Forever\Media\Icon.tga
 
 Doom_CooldownPulse_Forever.lua
+FilterEditor.lua
