@@ -19,7 +19,7 @@ Other fixes: initialize only on this addon's own `ADDON_LOADED`, and expire shor
 
 An empty whitelist now allows all cooldowns while preserving the saved Whitelist selection. Empty or whitespace-only comma-separated entries are ignored. The same behavior applies to spells and items on load, when switching modes, and when removing or clearing entries. Adding an entry activates whitelist filtering again.
 
-The filter editor uses a solid, fully opaque dark background. The mocked Lua 5.1 regression suite covers these transitions and the background configuration; final rendering still needs an in-game check.
+The filter editor uses a solid, fully opaque dark background. The floating options use the DIALOG layer below the editor's FULLSCREEN_DIALOG layer, so options controls cannot draw over the filter window. The mocked Lua 5.1 regression suite covers these transitions and the background configuration; final rendering still needs an in-game check.
 
 ## Version 1.0.8: Visual filter editor
 

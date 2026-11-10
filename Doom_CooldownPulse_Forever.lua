@@ -1173,7 +1173,8 @@ function DCP:CreateOptionsFrame()
     optionsframe:RegisterForDrag("LeftButton")
     optionsframe:SetScript("OnDragStart", function(self) self:StartMoving() end)
     optionsframe:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
-    optionsframe:SetFrameStrata("FULLSCREEN_DIALOG")
+    -- Keep the filter editor and its controls above the floating options.
+    optionsframe:SetFrameStrata("DIALOG")
     optionsframe:SetScript("OnHide", function() RefreshLocals() end)
     tinsert(UISpecialFrames, "DCP_OptionsFrame")
 
